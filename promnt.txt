@@ -1,0 +1,45 @@
+Actúa como un Desarrollador Senior de Python experto en interfaces gráficas con CustomTkinter y bases de datos locales con SQLite.
+
+Tu tarea es escribir el código completo y funcional para una aplicación de escritorio en Windows destinada a la gestión local de tickets de soporte. El programa debe ejecutarse en un entorno aislado sin necesidad de servidores web y prepararse para ser empaquetado con PyInstaller.
+
+## 1. Stack Tecnológico
+- Lenguaje: Python 3.x
+- Interfaz Gráfica: CustomTkinter (interfaz moderna, tema oscuro/claro).
+- Base de Datos: SQLite3 (archivo local llamado 'tickets_data.db').
+
+## 2. Estructura de la Base de Datos (SQLite)
+Debes crear el script de inicialización con tres tablas principales:
+1. `tickets`: id (INTEGER PRIMARY KEY AUTOINCREMENT), fecha_creacion (DATE), pais (TEXT), numero_ticket (TEXT), mail (TEXT), estado (TEXT), problem_name (TEXT), description (TEXT), estado_actual (TEXT).
+2. `comentarios`: id (INTEGER PRIMARY KEY), ticket_id (INTEGER FOREIGN KEY), fecha_hora (DATETIME), comentario (TEXT).
+3. `opciones_dinamicas`: id (INTEGER), tipo (TEXT - 'pais' o 'estado_actual'), valor (TEXT). (Para guardar los nuevos países y estados creados por el usuario).
+
+Opciones por defecto para inicializar la DB:
+- estado: 'respondido', 'pendiente', 'cerrado', 'no tomado', 'critico'.
+- estado_actual: 'Awaiting hq team response', 'Awaiting customer response'.
+
+## 3. Requisitos de la Interfaz Visual (CustomTkinter)
+La ventana principal debe dividirse en 3 secciones:
+- Barra Superior: Selector de fecha (por defecto la fecha actual), y un botón destacado "Generar Reporte SMS".
+- Panel Lateral (Formulario de Creación): Campos correspondientes a las columnas de la tabla `tickets`. Los campos 'pais' y 'estado_actual' deben ser ComboBox/OptionMenu que incluyan una opción "<Añadir Nuevo...>" que, al seleccionarse, abra un cuadro de diálogo para registrar una nueva opción dinámicamente. Botones para "Guardar Ticket" y "Limpiar".
+- Área Central (DataGrid / ScrollableFrame): Lista de tickets correspondientes al día seleccionado.
+
+## 4. Lógica de Negocio y "Rollover" Diario
+- Al abrir la app o al seleccionar una fecha, se deben mostrar los tickets creados EXACTAMENTE en esa fecha seleccionada.
+- REGLA DE ROLLOVER: En la vista de la "Fecha Actual" (hoy), además de los tickets creados hoy, se deben mostrar todos los tickets de días anteriores cuyo `estado` sea DIFERENTE de 'cerrado'. Estos tickets antiguos NO deben duplicarse en la base de datos, solo visualizarse en la cuadrícula de hoy, resaltados con un color de texto diferente (ej. rojo o naranja) para indicar que vienen arrastrados.
+- Acciones por ticket en la cuadrícula: 
+  - Botón "Eliminar": Realiza un Hard Delete (`DELETE FROM tickets WHERE id=?`) eliminándolo permanentemente de la BD, junto con sus comentarios.
+  - Botón "Ver/Agregar Progreso": Abre una ventana modal (Toplevel) que muestra una lista (ScrollableFrame) con el historial de comentarios de ese ticket, ordenados por fecha/hora. En la parte inferior de la modal, un TextBox y un botón para añadir un nuevo comentario al historial.
+
+## 5. Reporte SMS (Portapapeles)
+Al presionar "Generar Reporte SMS":
+1. Filtra los tickets visibles en la fecha actual cuyo `estado` sea distinto de 'cerrado' y distinto de 'no tomado'.
+2. Construye una cadena de texto puro con el siguiente formato exacto:
+
+Hi, daily open ticket report: [FECHA EN FORMATO: 2 jul 2026]
+
+[numero_ticket] : [problem_name] : [estado_actual]
+[numero_ticket] : [problem_name] : [estado_actual]
+
+3. Usa una librería nativa (como `tkinter.clipboard_clear()` y `clipboard_append()`) para copiar este texto al portapapeles de Windows y muestra un pequeño mensaje de éxito.
+
+Por favor, entrégame el código modularizado. Inicia proporcionando el código de la conexión y creación de la base de datos (SQLite), luego la lógica de negocio y finalmente la implementación de CustomTkinter. Asegúrate de incluir comentarios explicativos.
