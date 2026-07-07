@@ -29,6 +29,8 @@ class TicketApp(ctk.CTk):
         self.visible_tickets: list[dict[str, object]] = []
         self.pais_values: list[str] = []
         self.estado_actual_values: list[str] = []
+        self.table_columns = self._default_table_columns()
+        self.header_drag: dict[str, object] | None = None
 
         self._build_layout()
         self._reload_dynamic_options()
@@ -73,6 +75,22 @@ class TicketApp(ctk.CTk):
             fg_color="#16a34a",
             hover_color="#15803d",
         ).grid(row=0, column=3, padx=8, pady=12)
+        ctk.CTkButton(
+            top_bar,
+            text="Lista",
+            command=self._open_bulk_modal,
+            fg_color="#0891b2",
+            hover_color="#0e7490",
+            width=90,
+        ).grid(row=1, column=3, padx=8, pady=(0, 10))
+        ctk.CTkButton(
+            top_bar,
+            text="Defecto",
+            command=self._reset_table_columns,
+            fg_color="#52525b",
+            hover_color="#3f3f46",
+            width=90,
+        ).grid(row=1, column=5, padx=(8, 4), pady=(0, 10))
         ctk.CTkButton(top_bar, text="Exportar DB", command=self._export_database, width=105).grid(
             row=0, column=5, padx=(8, 4), pady=12
         )
@@ -132,6 +150,21 @@ class TicketApp(ctk.CTk):
         self.table_canvas.bind("<Configure>", self._sync_table_height)
         self.table_canvas.bind_all("<MouseWheel>", self._on_table_mousewheel)
 
+    def _default_table_columns(self) -> list[dict[str, object]]:
+        return [
+            {"key": "number", "title": "#", "width": 36},
+            {"key": "days", "title": "Dias", "width": 48},
+            {"key": "fecha", "title": "Fecha", "width": 72},
+            {"key": "pais", "title": "Pais", "width": 80},
+            {"key": "ticket", "title": "Ticket", "width": 118},
+            {"key": "mail", "title": "Mail", "width": 125},
+            {"key": "phone", "title": "Phone", "width": 90},
+            {"key": "estado", "title": "Estado", "width": 112},
+            {"key": "problem", "title": "Problema", "width": 135},
+            {"key": "estado_actual", "title": "Estado Actual", "width": 145},
+            {"key": "actions", "title": "Opciones", "width": 150},
+        ]
+
     def _update_table_scrollregion(self, _event: tk.Event | None = None) -> None:
         self.table_canvas.configure(scrollregion=self.table_canvas.bbox("all"))
 
@@ -153,6 +186,13 @@ class TicketApp(ctk.CTk):
 
     def _open_create_modal(self) -> None:
         CreateTicketModal(self)
+
+    def _open_bulk_modal(self) -> None:
+        BulkTicketModal(self)
+
+    def _reset_table_columns(self) -> None:
+        self.table_columns = self._default_table_columns()
+        self._render_ticket_grid()
 
     def _export_database(self) -> None:
         target_path = filedialog.asksaveasfilename(
@@ -338,95 +378,210 @@ class TicketApp(ctk.CTk):
         for widget in self.grid_frame.winfo_children():
             widget.destroy()
 
-        headers = ["#", "Dias", "Fecha", "Pais", "Ticket", "Mail", "Phone", "Estado", "Problema", "Estado Actual", "Opciones"]
-        widths = [36, 48, 72, 80, 118, 125, 90, 112, 135, 145, 150]
-        for column, header in enumerate(headers):
-            ctk.CTkLabel(
-                self.grid_frame,
-                text=header,
-                width=widths[column],
-                anchor="w",
-                font=ctk.CTkFont(weight="bold"),
-            ).grid(
-                row=0, column=column, sticky="w", padx=3, pady=(6, 8)
-            )
+        for column, config in enumerate(self.table_columns):
+            self._render_header(column, config)
 
         if not self.visible_tickets:
             ctk.CTkLabel(self.grid_frame, text="No hay tickets para la fecha seleccionada.").grid(
-                row=1, column=0, columnspan=len(headers), sticky="w", padx=8, pady=20
+                row=1, column=0, columnspan=len(self.table_columns), sticky="w", padx=8, pady=20
             )
             return
 
         for row_index, ticket in enumerate(self.visible_tickets, start=1):
             text_color = "#f97316" if ticket.get("is_rollover") else None
             days_open = self._days_open(str(ticket["fecha_creacion"]))
-            values = [
-                (0, row_index),
-                (1, days_open),
-                (2, ticket["fecha_creacion"]),
-                (3, ticket["pais"]),
-                (5, ticket["mail"]),
-                (6, ticket.get("phone", "")),
-                (8, ticket["problem_name"]),
-                (9, ticket["estado_actual"]),
-            ]
-            for target_column, value in values:
-                full_text = str(value or "-")
-                cell = ctk.CTkLabel(
-                    self.grid_frame,
-                    text=self._short_text(full_text, widths[target_column]),
-                    text_color=text_color,
-                    anchor="w",
-                    width=widths[target_column],
-                )
-                cell.grid(row=row_index, column=target_column, sticky="w", padx=3, pady=4)
-                cell.bind(
-                    "<Button-1>",
-                    lambda _event, title=headers[target_column], text=full_text: self._show_cell_text(title, text),
-                )
+            row_values = {
+                "number": row_index,
+                "days": days_open,
+                "fecha": ticket["fecha_creacion"],
+                "pais": ticket["pais"],
+                "mail": ticket["mail"],
+                "phone": ticket.get("phone", ""),
+                "problem": ticket["problem_name"],
+            }
+            for column, config in enumerate(self.table_columns):
+                key = str(config["key"])
+                width = int(config["width"])
+                if key == "ticket":
+                    self._render_ticket_button(row_index, column, width, ticket)
+                elif key == "actions":
+                    self._render_actions(row_index, column, width, ticket)
+                elif key == "estado":
+                    self._render_estado_combo(row_index, column, width, ticket)
+                elif key == "estado_actual":
+                    self._render_estado_actual_combo(row_index, column, width, ticket)
+                else:
+                    self._render_text_cell(
+                        row_index,
+                        column,
+                        width,
+                        str(row_values.get(key, "") or "-"),
+                        str(config["title"]),
+                        text_color,
+                    )
 
-            ticket_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=widths[4], height=28)
-            ticket_cell.grid(row=row_index, column=4, sticky="w", padx=3, pady=3)
-            ticket_cell.grid_propagate(False)
-            ticket_cell.grid_columnconfigure(0, weight=1)
-            ctk.CTkButton(
-                ticket_cell,
-                text=self._short_text(str(ticket["numero_ticket"] or "Progreso"), widths[4]),
-                width=widths[4],
-                height=24,
-                command=lambda ticket_id=int(ticket["id"]): self._open_comments_modal(ticket_id),
-            ).grid(row=0, column=0, sticky="ew")
+    def _render_header(self, column: int, config: dict[str, object]) -> None:
+        width = int(config["width"])
+        title = str(config["title"])
+        label = ctk.CTkLabel(
+            self.grid_frame,
+            text=f"{title}  |",
+            width=width,
+            anchor="w",
+            font=ctk.CTkFont(weight="bold"),
+        )
+        label.grid(row=0, column=column, sticky="w", padx=3, pady=(6, 8))
+        label.bind("<ButtonPress-1>", lambda event, key=config["key"]: self._start_header_drag(event, str(key)))
+        label.bind("<Motion>", lambda event, widget=label: self._set_header_cursor(event, widget))
 
-            actions_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=widths[10], height=28)
-            actions_cell.grid(row=row_index, column=10, sticky="e", padx=3, pady=3)
-            actions_cell.grid_propagate(False)
-            ctk.CTkButton(
-                actions_cell,
-                text="Editar",
-                width=70,
-                height=24,
-                fg_color="#16a34a",
-                hover_color="#15803d",
-                command=lambda ticket_id=int(ticket["id"]): self._open_edit_modal(ticket_id),
-            ).grid(row=0, column=0, padx=(0, 4))
-            ctk.CTkButton(
-                actions_cell,
-                text="Eliminar",
-                width=76,
-                height=24,
-                fg_color="#dc2626",
-                hover_color="#991b1b",
-                command=lambda ticket_id=int(ticket["id"]): self._delete_ticket(ticket_id),
-            ).grid(row=0, column=1)
+    def _render_text_cell(
+        self,
+        row: int,
+        column: int,
+        width: int,
+        full_text: str,
+        title: str,
+        text_color: str | None,
+    ) -> None:
+        cell = ctk.CTkLabel(
+            self.grid_frame,
+            text=self._short_text(full_text, width),
+            text_color=text_color,
+            anchor="w",
+            width=width,
+        )
+        cell.grid(row=row, column=column, sticky="w", padx=3, pady=4)
+        cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._show_cell_text(cell_title, text))
 
-            estado_combo = ctk.CTkComboBox(
-                self.grid_frame,
-                values=list(services.get_estados()),
-                width=widths[7],
-                command=lambda value, ticket_id=int(ticket["id"]): self._update_ticket_estado(ticket_id, value),
-            )
-            estado_combo.set(str(ticket["estado"]))
-            estado_combo.grid(row=row_index, column=7, sticky="w", padx=3, pady=4)
+    def _render_ticket_button(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
+        ticket_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
+        ticket_cell.grid(row=row, column=column, sticky="w", padx=3, pady=3)
+        ticket_cell.grid_propagate(False)
+        ticket_cell.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            ticket_cell,
+            text=self._short_text(str(ticket["numero_ticket"] or "Progreso"), width),
+            width=width,
+            height=24,
+            command=lambda ticket_id=int(ticket["id"]): self._open_comments_modal(ticket_id),
+        ).grid(row=0, column=0, sticky="ew")
+
+    def _render_actions(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
+        actions_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
+        actions_cell.grid(row=row, column=column, sticky="e", padx=3, pady=3)
+        actions_cell.grid_propagate(False)
+        edit_width = max(56, min(70, (width - 8) // 2))
+        delete_width = max(64, width - edit_width - 4)
+        ctk.CTkButton(
+            actions_cell,
+            text="Editar",
+            width=edit_width,
+            height=24,
+            fg_color="#16a34a",
+            hover_color="#15803d",
+            command=lambda ticket_id=int(ticket["id"]): self._open_edit_modal(ticket_id),
+        ).grid(row=0, column=0, padx=(0, 4))
+        ctk.CTkButton(
+            actions_cell,
+            text="Eliminar",
+            width=delete_width,
+            height=24,
+            fg_color="#dc2626",
+            hover_color="#991b1b",
+            command=lambda ticket_id=int(ticket["id"]): self._delete_ticket(ticket_id),
+        ).grid(row=0, column=1)
+
+    def _render_estado_combo(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
+        estado_combo = ctk.CTkComboBox(
+            self.grid_frame,
+            values=list(services.get_estados()),
+            width=width,
+            command=lambda value, ticket_id=int(ticket["id"]): self._update_ticket_estado(ticket_id, value),
+        )
+        estado_combo.set(str(ticket["estado"]))
+        estado_combo.grid(row=row, column=column, sticky="w", padx=3, pady=4)
+
+    def _render_estado_actual_combo(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
+        estado_actual_combo = ctk.CTkComboBox(
+            self.grid_frame,
+            values=self.estado_actual_values,
+            width=width,
+            command=lambda value, ticket_id=int(ticket["id"]): self._update_ticket_estado_actual(ticket_id, value),
+        )
+        estado_actual_combo.set(str(ticket["estado_actual"]))
+        estado_actual_combo.grid(row=row, column=column, sticky="w", padx=3, pady=4)
+
+    def _start_header_drag(self, event: tk.Event, key: str) -> None:
+        config = self._column_config(key)
+        if not config:
+            return
+        widget_width = max(int(config["width"]), event.widget.winfo_width())
+        mode = "resize" if event.x >= widget_width - 12 else "move"
+        self.header_drag = {
+            "key": key,
+            "mode": mode,
+            "x_root": event.x_root,
+            "start_width": int(config["width"]),
+            "widget": event.widget,
+        }
+
+        self.bind("<B1-Motion>", self._drag_header)
+        self.bind("<ButtonRelease-1>", self._finish_header_drag)
+
+    def _set_header_cursor(self, event: tk.Event, widget: tk.Widget) -> None:
+        cursor = "sb_h_double_arrow" if event.x >= widget.winfo_width() - 12 else "fleur"
+        try:
+            widget.configure(cursor=cursor)
+        except Exception:
+            pass
+
+    def _drag_header(self, event: tk.Event) -> None:
+        if not self.header_drag or self.header_drag["mode"] != "resize":
+            return
+
+        key = str(self.header_drag["key"])
+        config = self._column_config(key)
+        if not config:
+            return
+
+        delta = event.x_root - int(self.header_drag["x_root"])
+        new_width = max(34, int(self.header_drag["start_width"]) + delta)
+        config["width"] = new_width
+        widget = self.header_drag.get("widget")
+        if widget:
+            widget.configure(width=new_width)
+
+    def _finish_header_drag(self, event: tk.Event) -> None:
+        if not self.header_drag:
+            return
+        key = str(self.header_drag["key"])
+        mode = str(self.header_drag["mode"])
+        delta = event.x_root - int(self.header_drag["x_root"])
+        if mode == "resize":
+            config = self._column_config(key)
+            if config:
+                config["width"] = max(34, int(self.header_drag["start_width"]) + delta)
+        elif abs(delta) >= 45:
+            self._move_column_by_delta(key, delta)
+        self.header_drag = None
+        self.unbind("<B1-Motion>")
+        self.unbind("<ButtonRelease-1>")
+        self._render_ticket_grid()
+
+    def _column_config(self, key: str) -> dict[str, object] | None:
+        return next((column for column in self.table_columns if column["key"] == key), None)
+
+    def _move_column_by_delta(self, key: str, delta: int) -> None:
+        current_index = next((index for index, column in enumerate(self.table_columns) if column["key"] == key), None)
+        if current_index is None:
+            return
+        step = max(1, abs(delta) // 90)
+        target_index = current_index + (step if delta > 0 else -step)
+        target_index = max(0, min(len(self.table_columns) - 1, target_index))
+        if target_index == current_index:
+            return
+        column = self.table_columns.pop(current_index)
+        self.table_columns.insert(target_index, column)
 
     def _days_open(self, created_at: str) -> int:
         try:
@@ -469,6 +624,15 @@ class TicketApp(ctk.CTk):
             return
         self._load_tickets()
 
+    def _update_ticket_estado_actual(self, ticket_id: int, estado_actual: str) -> None:
+        try:
+            services.update_ticket_estado_actual(ticket_id, estado_actual)
+        except ValueError as exc:
+            messagebox.showerror("Estado actual invalido", str(exc), parent=self)
+            self._load_tickets()
+            return
+        self._load_tickets()
+
     def _open_comments_modal(self, ticket_id: int) -> None:
         CommentsModal(self, ticket_id)
 
@@ -494,6 +658,158 @@ class TicketApp(ctk.CTk):
         self.clipboard_append(report)
         self.update()
         messagebox.showinfo("Reporte SMS", "Reporte copiado al portapapeles.", parent=self)
+
+
+class BulkTicketModal(ctk.CTkToplevel):
+    def __init__(self, parent: TicketApp) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.tickets: list[str] = []
+        self.problems: list[str] = []
+
+        self.title("Crear Tickets Desde Lista")
+        self.geometry("760x640")
+        self.minsize(640, 520)
+        self.transient(parent)
+        self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        controls = ctk.CTkFrame(self)
+        controls.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        controls.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkButton(controls, text="Pegar Tickets", command=lambda: self._paste_column("tickets")).grid(
+            row=0, column=0, sticky="ew", padx=(8, 4), pady=10
+        )
+        ctk.CTkButton(controls, text="Pegar Problemas", command=lambda: self._paste_column("problems")).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=10
+        )
+        ctk.CTkButton(controls, text="Limpiar Lista", command=self._clear, fg_color="#52525b").grid(
+            row=0, column=2, sticky="ew", padx=4, pady=10
+        )
+        ctk.CTkButton(controls, text="Guardar", command=self._save, fg_color="#16a34a", hover_color="#15803d").grid(
+            row=0, column=3, sticky="ew", padx=(4, 8), pady=10
+        )
+
+        self.preview = ctk.CTkScrollableFrame(self, label_text="Vista previa")
+        self.preview.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
+
+        self.result_label = ctk.CTkLabel(self, text="Pega una columna de Excel en Tickets y otra en Problemas.", anchor="w")
+        self.result_label.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 14))
+
+        self._render_preview()
+
+    def _paste_column(self, target: str) -> None:
+        try:
+            clipboard = self.clipboard_get()
+        except tk.TclError:
+            messagebox.showwarning("Portapapeles", "No hay texto disponible para pegar.", parent=self)
+            return
+
+        values = [line.strip() for line in clipboard.splitlines()]
+        while values and not values[-1]:
+            values.pop()
+
+        if target == "tickets":
+            self.tickets = values
+        else:
+            self.problems = values
+        self._render_preview()
+
+    def _clear(self) -> None:
+        self.tickets = []
+        self.problems = []
+        self.result_label.configure(text="Lista limpia.")
+        self._render_preview()
+
+    def _render_preview(self) -> None:
+        for widget in self.preview.winfo_children():
+            widget.destroy()
+
+        headers = ["#", "Ticket", "Problema", "Estado"]
+        widths = [42, 190, 310, 140]
+        for column, header in enumerate(headers):
+            ctk.CTkLabel(
+                self.preview,
+                text=header,
+                width=widths[column],
+                anchor="w",
+                font=ctk.CTkFont(weight="bold"),
+            ).grid(row=0, column=column, sticky="w", padx=4, pady=(6, 8))
+
+        row_count = max(len(self.tickets), len(self.problems), 1)
+        if not self.tickets and not self.problems:
+            ctk.CTkLabel(self.preview, text="Sin datos pegados.").grid(
+                row=1, column=0, columnspan=4, sticky="w", padx=4, pady=12
+            )
+            return
+
+        for index in range(row_count):
+            ticket = self.tickets[index].strip() if index < len(self.tickets) else ""
+            problem = self.problems[index].strip() if index < len(self.problems) else ""
+            status = self._preview_status(ticket)
+            values = [str(index + 1), ticket or "-", problem or "-", status]
+            for column, value in enumerate(values):
+                ctk.CTkLabel(
+                    self.preview,
+                    text=self.parent._short_text(value, widths[column]),
+                    width=widths[column],
+                    anchor="w",
+                    text_color="#f97316" if status == "Duplicado" else None,
+                ).grid(row=index + 1, column=column, sticky="w", padx=4, pady=3)
+
+        self.result_label.configure(
+            text=f"Filas detectadas: {row_count} | Tickets: {len(self.tickets)} | Problemas: {len(self.problems)}"
+        )
+
+    def _preview_status(self, ticket: str) -> str:
+        if not ticket:
+            return "Sin ticket"
+        if services.ticket_exists(ticket):
+            return "Duplicado"
+        return "Nuevo"
+
+    def _save(self) -> None:
+        if not self.tickets:
+            messagebox.showwarning("Lista", "No hay tickets para guardar.", parent=self)
+            return
+
+        rows = []
+        for index, ticket in enumerate(self.tickets):
+            rows.append(
+                {
+                    "numero_ticket": ticket,
+                    "problem_name": self.problems[index] if index < len(self.problems) else "",
+                }
+            )
+
+        defaults = {
+            "fecha_creacion": self.parent._selected_date().isoformat(),
+            "pais": self.parent.pais_values[0] if self.parent.pais_values else "United States",
+            "mail": "",
+            "phone": "",
+            "estado": "pendiente",
+            "description": "",
+            "estado_actual": self.parent.estado_actual_values[0]
+            if self.parent.estado_actual_values
+            else "Awaiting hq team response",
+        }
+        result = services.create_ticket_list(rows, defaults)
+        created = result["created"]
+        duplicates = result["duplicates"]
+        ignored = result["ignored"]
+
+        summary = [f"{len(created)} tickets adicionados."]
+        if duplicates:
+            summary.append(f"{len(duplicates)} tickets duplicados: {', '.join(duplicates)}")
+        if ignored:
+            summary.append(f"{len(ignored)} filas ignoradas sin ticket: {', '.join(map(str, ignored))}")
+
+        self.result_label.configure(text=" | ".join(summary))
+        messagebox.showinfo("Resultado", "\n".join(summary), parent=self)
+        self.parent._load_tickets()
+        self._render_preview()
 
 
 class CreateTicketModal(ctk.CTkToplevel):

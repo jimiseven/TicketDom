@@ -35,6 +35,10 @@ def get_options(tipo: str) -> list[str]:
     return [row["valor"] for row in rows]
 
 
+def normalize_ticket_number(numero_ticket: str) -> str:
+    return " ".join(numero_ticket.strip().split())
+
+
 def add_option(tipo: str, valor: str) -> str:
     valor = valor.strip()
     if not valor:
@@ -75,6 +79,55 @@ def create_ticket(ticket_data: dict[str, str]) -> int:
             ),
         )
         return int(cursor.lastrowid)
+
+
+def ticket_exists(numero_ticket: str) -> bool:
+    numero_ticket = normalize_ticket_number(numero_ticket)
+    if not numero_ticket:
+        return False
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM tickets WHERE lower(numero_ticket) = lower(?) LIMIT 1",
+            (numero_ticket,),
+        ).fetchone()
+    return row is not None
+
+
+def create_ticket_list(
+    rows: list[dict[str, str]],
+    defaults: dict[str, str],
+) -> dict[str, object]:
+    created: list[str] = []
+    duplicates: list[str] = []
+    ignored: list[int] = []
+    seen_in_batch: set[str] = set()
+
+    for index, row in enumerate(rows, start=1):
+        numero_ticket = normalize_ticket_number(row.get("numero_ticket", ""))
+        if not numero_ticket:
+            ignored.append(index)
+            continue
+
+        duplicate_key = numero_ticket.lower()
+        if duplicate_key in seen_in_batch or ticket_exists(numero_ticket):
+            duplicates.append(numero_ticket)
+            continue
+
+        ticket_data = {
+            **defaults,
+            "numero_ticket": numero_ticket,
+            "problem_name": row.get("problem_name", "").strip(),
+        }
+        create_ticket(ticket_data)
+        seen_in_batch.add(duplicate_key)
+        created.append(numero_ticket)
+
+    return {
+        "created": created,
+        "duplicates": duplicates,
+        "ignored": ignored,
+    }
 
 
 def get_ticket(ticket_id: int) -> dict[str, object] | None:
@@ -154,6 +207,18 @@ def update_ticket_estado(ticket_id: int, estado: str) -> None:
 
     with get_connection() as conn:
         conn.execute("UPDATE tickets SET estado = ? WHERE id = ?", (estado, ticket_id))
+
+
+def update_ticket_estado_actual(ticket_id: int, estado_actual: str) -> None:
+    estado_actual = estado_actual.strip()
+    if not estado_actual:
+        raise ValueError("Estado actual invalido.")
+
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE tickets SET estado_actual = ? WHERE id = ?",
+            (estado_actual, ticket_id),
+        )
 
 
 def get_comments(ticket_id: int) -> list[dict[str, str]]:
