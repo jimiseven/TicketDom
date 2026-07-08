@@ -176,7 +176,7 @@ def get_visible_tickets(selected_date: date) -> list[dict[str, object]]:
                 SELECT *, fecha_creacion < ? AS is_rollover
                 FROM tickets
                 WHERE fecha_creacion = ?
-                   OR (fecha_creacion < ? AND estado <> 'cerrado')
+                   OR (fecha_creacion < ? AND estado IN ('respondido', 'pendiente', 'critico'))
                 ORDER BY is_rollover DESC, fecha_creacion ASC, id DESC
                 """,
                 (today_iso, today_iso, today_iso),
@@ -198,6 +198,15 @@ def get_visible_tickets(selected_date: date) -> list[dict[str, object]]:
 def delete_ticket(ticket_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+
+
+def delete_tickets(ticket_ids: list[int]) -> None:
+    if not ticket_ids:
+        return
+
+    placeholders = ",".join("?" for _ in ticket_ids)
+    with get_connection() as conn:
+        conn.execute(f"DELETE FROM tickets WHERE id IN ({placeholders})", ticket_ids)
 
 
 def update_ticket_estado(ticket_id: int, estado: str) -> None:

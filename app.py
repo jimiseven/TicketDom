@@ -29,6 +29,7 @@ class TicketApp(ctk.CTk):
         self.visible_tickets: list[dict[str, object]] = []
         self.pais_values: list[str] = []
         self.estado_actual_values: list[str] = []
+        self.selected_ticket_ids: set[int] = set()
         self.table_columns = self._default_table_columns()
         self.header_drag: dict[str, object] | None = None
 
@@ -106,6 +107,13 @@ class TicketApp(ctk.CTk):
         ).grid(row=0, column=7, padx=(4, 6), pady=12)
         ctk.CTkButton(
             top_bar,
+            text="Eliminar Marcados",
+            command=self._delete_selected_tickets,
+            fg_color="#dc2626",
+            hover_color="#991b1b",
+        ).grid(row=1, column=7, padx=(4, 6), pady=(0, 10))
+        ctk.CTkButton(
+            top_bar,
             text="Generar Reporte SMS",
             command=self._copy_sms_report,
             fg_color="#d97706",
@@ -152,6 +160,7 @@ class TicketApp(ctk.CTk):
 
     def _default_table_columns(self) -> list[dict[str, object]]:
         return [
+            {"key": "select", "title": "Sel", "width": 44},
             {"key": "number", "title": "#", "width": 36},
             {"key": "days", "title": "Dias", "width": 48},
             {"key": "fecha", "title": "Fecha", "width": 72},
@@ -372,6 +381,8 @@ class TicketApp(ctk.CTk):
 
     def _load_tickets(self) -> None:
         self.visible_tickets = services.get_visible_tickets(self._selected_date())
+        visible_ids = {int(ticket["id"]) for ticket in self.visible_tickets}
+        self.selected_ticket_ids.intersection_update(visible_ids)
         self._render_ticket_grid()
 
     def _render_ticket_grid(self) -> None:
@@ -404,6 +415,8 @@ class TicketApp(ctk.CTk):
                 width = int(config["width"])
                 if key == "ticket":
                     self._render_ticket_button(row_index, column, width, ticket)
+                elif key == "select":
+                    self._render_select_checkbox(row_index, column, width, ticket)
                 elif key == "actions":
                     self._render_actions(row_index, column, width, ticket)
                 elif key == "estado":
@@ -465,6 +478,24 @@ class TicketApp(ctk.CTk):
             height=24,
             command=lambda ticket_id=int(ticket["id"]): self._open_comments_modal(ticket_id),
         ).grid(row=0, column=0, sticky="ew")
+
+    def _render_select_checkbox(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
+        ticket_id = int(ticket["id"])
+        checked = tk.BooleanVar(value=ticket_id in self.selected_ticket_ids)
+        checkbox = ctk.CTkCheckBox(
+            self.grid_frame,
+            text="",
+            width=width,
+            variable=checked,
+            command=lambda tid=ticket_id, var=checked: self._toggle_ticket_selection(tid, var.get()),
+        )
+        checkbox.grid(row=row, column=column, sticky="w", padx=8, pady=4)
+
+    def _toggle_ticket_selection(self, ticket_id: int, selected: bool) -> None:
+        if selected:
+            self.selected_ticket_ids.add(ticket_id)
+        else:
+            self.selected_ticket_ids.discard(ticket_id)
 
     def _render_actions(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
         actions_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
@@ -613,7 +644,27 @@ class TicketApp(ctk.CTk):
         if not confirmed:
             return
         services.delete_ticket(ticket_id)
+        self.selected_ticket_ids.discard(ticket_id)
         self._load_tickets()
+
+    def _delete_selected_tickets(self) -> None:
+        if not self.selected_ticket_ids:
+            messagebox.showinfo("Eliminar marcados", "No hay tickets marcados para eliminar.", parent=self)
+            return
+
+        count = len(self.selected_ticket_ids)
+        confirmed = messagebox.askyesno(
+            "Eliminar marcados",
+            f"Esta accion eliminara permanentemente {count} ticket(s) y sus comentarios. Continuar?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+
+        services.delete_tickets(sorted(self.selected_ticket_ids))
+        self.selected_ticket_ids.clear()
+        self._load_tickets()
+        messagebox.showinfo("Eliminar marcados", f"Se eliminaron {count} ticket(s).", parent=self)
 
     def _update_ticket_estado(self, ticket_id: int, estado: str) -> None:
         try:
