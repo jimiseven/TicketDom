@@ -30,6 +30,7 @@ class TicketApp(ctk.CTk):
         self.pais_values: list[str] = []
         self.estado_actual_values: list[str] = []
         self.selected_ticket_ids: set[int] = set()
+        self.updated_ticket_ids: set[int] = set()
         self.table_columns = self._default_table_columns()
         self.header_drag: dict[str, object] | None = None
 
@@ -119,6 +120,13 @@ class TicketApp(ctk.CTk):
             fg_color="#d97706",
             hover_color="#b45309",
         ).grid(row=0, column=8, padx=(6, 16), pady=12)
+        ctk.CTkButton(
+            top_bar,
+            text="Reporte Diario",
+            command=self._open_daily_report_modal,
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+        ).grid(row=1, column=8, padx=(6, 16), pady=(0, 10))
 
         self.table_container = ctk.CTkFrame(self)
         self.table_container.grid(row=1, column=0, sticky="nsew", padx=12, pady=12)
@@ -198,6 +206,24 @@ class TicketApp(ctk.CTk):
 
     def _open_bulk_modal(self) -> None:
         BulkTicketModal(self)
+
+    def _open_daily_report_modal(self) -> None:
+        DailyReportModal(self)
+
+    def _show_toast(self, message: str) -> None:
+        toast = ctk.CTkToplevel(self)
+        toast.title("")
+        toast.geometry("340x90")
+        toast.resizable(False, False)
+        toast.transient(self)
+        toast.attributes("-topmost", True)
+        ctk.CTkLabel(
+            toast,
+            text=message,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            wraplength=300,
+        ).pack(expand=True, fill="both", padx=18, pady=18)
+        toast.after(1600, toast.destroy)
 
     def _reset_table_columns(self) -> None:
         self.table_columns = self._default_table_columns()
@@ -383,6 +409,7 @@ class TicketApp(ctk.CTk):
         self.visible_tickets = services.get_visible_tickets(self._selected_date())
         visible_ids = {int(ticket["id"]) for ticket in self.visible_tickets}
         self.selected_ticket_ids.intersection_update(visible_ids)
+        self.updated_ticket_ids = services.get_updated_ticket_ids(sorted(visible_ids), self._selected_date())
         self._render_ticket_grid()
 
     def _render_ticket_grid(self) -> None:
@@ -471,13 +498,28 @@ class TicketApp(ctk.CTk):
         ticket_cell.grid(row=row, column=column, sticky="w", padx=3, pady=3)
         ticket_cell.grid_propagate(False)
         ticket_cell.grid_columnconfigure(0, weight=1)
+        fg_color, hover_color = self._ticket_update_colors(ticket)
         ctk.CTkButton(
             ticket_cell,
             text=self._short_text(str(ticket["numero_ticket"] or "Progreso"), width),
             width=width,
             height=24,
+            fg_color=fg_color,
+            hover_color=hover_color,
             command=lambda ticket_id=int(ticket["id"]): self._open_comments_modal(ticket_id),
         ).grid(row=0, column=0, sticky="ew")
+
+    def _ticket_update_colors(self, ticket: dict[str, object]) -> tuple[str | None, str | None]:
+        estado = str(ticket["estado"]).lower()
+        if estado not in {"respondido", "pendiente", "critico"}:
+            return None, None
+
+        ticket_id = int(ticket["id"])
+        created_date = str(ticket["fecha_creacion"])
+        selected_date = self._selected_date().isoformat()
+        if created_date == selected_date or ticket_id in self.updated_ticket_ids:
+            return "#16a34a", "#15803d"
+        return "#dc2626", "#991b1b"
 
     def _render_select_checkbox(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
         ticket_id = int(ticket["id"])
@@ -669,6 +711,7 @@ class TicketApp(ctk.CTk):
     def _update_ticket_estado(self, ticket_id: int, estado: str) -> None:
         try:
             services.update_ticket_estado(ticket_id, estado)
+            services.mark_ticket_updated(ticket_id, self._selected_date())
         except ValueError as exc:
             messagebox.showerror("Estado invalido", str(exc), parent=self)
             self._load_tickets()
@@ -678,6 +721,7 @@ class TicketApp(ctk.CTk):
     def _update_ticket_estado_actual(self, ticket_id: int, estado_actual: str) -> None:
         try:
             services.update_ticket_estado_actual(ticket_id, estado_actual)
+            services.mark_ticket_updated(ticket_id, self._selected_date())
         except ValueError as exc:
             messagebox.showerror("Estado actual invalido", str(exc), parent=self)
             self._load_tickets()
@@ -709,6 +753,120 @@ class TicketApp(ctk.CTk):
         self.clipboard_append(report)
         self.update()
         messagebox.showinfo("Reporte SMS", "Reporte copiado al portapapeles.", parent=self)
+
+
+class DailyReportModal(ctk.CTkToplevel):
+    FIELDS = [
+        ("inbound_calls", "Inbound calls"),
+        ("outbound_calls", "Outbound calls"),
+        ("calls_failed", "Calls Failed to connect"),
+        ("moor_chat", "7 moor platform online chat"),
+        ("first_call_resolved", "Issues resolved over the first call"),
+        ("emails", "Emails"),
+        ("tickets_hq_help", "Tickets needing HQ help or attention"),
+    ]
+
+    def __init__(self, parent: TicketApp) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.report_date = parent._selected_date()
+        self.values: dict[str, int] = {}
+        self.value_labels: dict[str, ctk.CTkLabel] = {}
+
+        self.title("Reporte Diario")
+        self.geometry("640x520")
+        self.minsize(560, 460)
+        self.transient(parent)
+        self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+
+        data = services.get_daily_report(self.report_date)
+        ticket_count = services.count_daily_report_tickets(self.report_date)
+        formatted_date = f"{self.report_date.day} {services.MONTHS_ES[self.report_date.month]} {self.report_date.year}"
+
+        header = ctk.CTkFrame(self)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text=f"Reporte Diario - {formatted_date}",
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
+        ctk.CTkLabel(header, text=f"Tickets del dia contados: {ticket_count}").grid(
+            row=1, column=0, sticky="w", padx=12, pady=(0, 10)
+        )
+
+        body = ctk.CTkFrame(self)
+        body.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
+        body.grid_columnconfigure(0, weight=1)
+
+        for row, (field, label) in enumerate(self.FIELDS):
+            self.values[field] = int(data.get(field, 0))
+            ctk.CTkLabel(body, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=8)
+            ctk.CTkButton(
+                body,
+                text="-",
+                width=44,
+                fg_color="#52525b",
+                command=lambda report_field=field: self._change_counter(report_field, -1),
+            ).grid(row=row, column=1, sticky="e", padx=(6, 4), pady=6)
+            value_label = ctk.CTkLabel(
+                body,
+                text=str(self.values[field]),
+                width=64,
+                font=ctk.CTkFont(size=16, weight="bold"),
+            )
+            value_label.grid(row=row, column=2, padx=4, pady=8)
+            self.value_labels[field] = value_label
+            ctk.CTkButton(
+                body,
+                text="+1",
+                width=58,
+                command=lambda report_field=field: self._change_counter(report_field, 1),
+            ).grid(row=row, column=3, sticky="w", padx=(4, 12), pady=6)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 14))
+        buttons.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkButton(buttons, text="Guardar", command=self._save).grid(
+            row=0, column=0, sticky="ew", padx=(0, 6)
+        )
+        ctk.CTkButton(
+            buttons,
+            text="Generar Mensaje y Copiar",
+            command=self._copy_message,
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+        ).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+    def _collect_data(self) -> dict[str, int] | None:
+        return dict(self.values)
+
+    def _change_counter(self, field: str, delta: int) -> None:
+        self.values[field] = max(0, self.values.get(field, 0) + delta)
+        self.value_labels[field].configure(text=str(self.values[field]))
+        services.save_daily_report(self.report_date, self.values)
+
+    def _save(self) -> bool:
+        data = self._collect_data()
+        if data is None:
+            return False
+        services.save_daily_report(self.report_date, data)
+        self.parent._show_toast("Reporte diario guardado.")
+        self.destroy()
+        return True
+
+    def _copy_message(self) -> None:
+        data = self._collect_data()
+        if data is None:
+            return
+        services.save_daily_report(self.report_date, data)
+        message = services.build_daily_report_message(self.report_date, data)
+        self.clipboard_clear()
+        self.clipboard_append(message)
+        self.update()
+        self.parent._show_toast("Mensaje copiado al portapapeles.")
+        self.destroy()
 
 
 class BulkTicketModal(ctk.CTkToplevel):
@@ -1129,6 +1287,7 @@ class EditTicketModal(ctk.CTkToplevel):
         }
         try:
             services.update_ticket(self.ticket_id, data)
+            services.mark_ticket_updated(self.ticket_id, self.parent._selected_date())
         except ValueError as exc:
             messagebox.showerror("Datos invalidos", str(exc), parent=self)
             return
@@ -1160,7 +1319,16 @@ class CommentsModal(ctk.CTkToplevel):
         self.comment_text = ctk.CTkTextbox(input_frame, height=90)
         self.comment_text.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
         ctk.CTkButton(input_frame, text="Agregar Comentario", command=self._add_comment).grid(
-            row=0, column=1, padx=(0, 10), pady=10
+            row=0, column=1, padx=(0, 8), pady=10
+        )
+        ctk.CTkButton(
+            input_frame,
+            text="Marcar Actualizado",
+            command=self._mark_updated,
+            fg_color="#16a34a",
+            hover_color="#15803d",
+        ).grid(
+            row=0, column=2, padx=(0, 10), pady=10
         )
 
         self._load_comments()
@@ -1194,7 +1362,14 @@ class CommentsModal(ctk.CTkToplevel):
             messagebox.showerror("Comentario invalido", str(exc), parent=self)
             return
         self.comment_text.delete("1.0", "end")
+        services.mark_ticket_updated(self.ticket_id, self.parent._selected_date())
+        self.parent._load_tickets()
         self._load_comments()
+
+    def _mark_updated(self) -> None:
+        services.mark_ticket_updated(self.ticket_id, self.parent._selected_date())
+        self.parent._load_tickets()
+        self.parent._show_toast("Ticket marcado como actualizado.")
 
 
 if __name__ == "__main__":

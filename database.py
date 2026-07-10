@@ -59,6 +59,28 @@ def initialize_database() -> None:
                 valor TEXT NOT NULL,
                 UNIQUE(tipo, valor)
             );
+
+            CREATE TABLE IF NOT EXISTS daily_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha DATE NOT NULL UNIQUE,
+                inbound_calls INTEGER NOT NULL DEFAULT 0,
+                outbound_calls INTEGER NOT NULL DEFAULT 0,
+                calls_failed INTEGER NOT NULL DEFAULT 0,
+                moor_chat INTEGER NOT NULL DEFAULT 0,
+                first_call_resolved INTEGER NOT NULL DEFAULT 0,
+                emails INTEGER NOT NULL DEFAULT 0,
+                tickets_hq_help INTEGER NOT NULL DEFAULT 0,
+                updated_at DATETIME NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ticket_daily_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                fecha DATE NOT NULL,
+                updated_at DATETIME NOT NULL,
+                FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+                UNIQUE(ticket_id, fecha)
+            );
             """
         )
         _run_migrations(conn)

@@ -209,6 +209,133 @@ def delete_tickets(ticket_ids: list[int]) -> None:
         conn.execute(f"DELETE FROM tickets WHERE id IN ({placeholders})", ticket_ids)
 
 
+def mark_ticket_updated(ticket_id: int, update_date: date) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO ticket_daily_updates (ticket_id, fecha, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ticket_id, fecha) DO UPDATE SET updated_at = excluded.updated_at
+            """,
+            (ticket_id, update_date.isoformat(), now),
+        )
+
+
+def get_updated_ticket_ids(ticket_ids: list[int], update_date: date) -> set[int]:
+    if not ticket_ids:
+        return set()
+
+    placeholders = ",".join("?" for _ in ticket_ids)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT ticket_id
+            FROM ticket_daily_updates
+            WHERE fecha = ?
+              AND ticket_id IN ({placeholders})
+            """,
+            [update_date.isoformat(), *ticket_ids],
+        ).fetchall()
+    return {int(row["ticket_id"]) for row in rows}
+
+
+DAILY_REPORT_FIELDS = (
+    "inbound_calls",
+    "outbound_calls",
+    "calls_failed",
+    "moor_chat",
+    "first_call_resolved",
+    "emails",
+    "tickets_hq_help",
+)
+
+
+def get_daily_report(report_date: date) -> dict[str, int]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM daily_reports WHERE fecha = ?",
+            (report_date.isoformat(),),
+        ).fetchone()
+
+    if not row:
+        return {field: 0 for field in DAILY_REPORT_FIELDS}
+    return {field: int(row[field] or 0) for field in DAILY_REPORT_FIELDS}
+
+
+def save_daily_report(report_date: date, data: dict[str, int]) -> None:
+    values = {field: max(0, int(data.get(field, 0))) for field in DAILY_REPORT_FIELDS}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_reports (
+                fecha, inbound_calls, outbound_calls, calls_failed, moor_chat,
+                first_call_resolved, emails, tickets_hq_help, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(fecha) DO UPDATE SET
+                inbound_calls = excluded.inbound_calls,
+                outbound_calls = excluded.outbound_calls,
+                calls_failed = excluded.calls_failed,
+                moor_chat = excluded.moor_chat,
+                first_call_resolved = excluded.first_call_resolved,
+                emails = excluded.emails,
+                tickets_hq_help = excluded.tickets_hq_help,
+                updated_at = excluded.updated_at
+            """,
+            (
+                report_date.isoformat(),
+                values["inbound_calls"],
+                values["outbound_calls"],
+                values["calls_failed"],
+                values["moor_chat"],
+                values["first_call_resolved"],
+                values["emails"],
+                values["tickets_hq_help"],
+                now,
+            ),
+        )
+
+
+def count_daily_report_tickets(report_date: date) -> int:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT tickets.id) AS total
+            FROM tickets
+            LEFT JOIN ticket_daily_updates
+              ON ticket_daily_updates.ticket_id = tickets.id
+             AND ticket_daily_updates.fecha = ?
+            WHERE tickets.fecha_creacion = ?
+               OR ticket_daily_updates.ticket_id IS NOT NULL
+            """,
+            (report_date.isoformat(), report_date.isoformat()),
+        ).fetchone()
+    return int(row["total"] or 0)
+
+
+def build_daily_report_message(report_date: date, data: dict[str, int]) -> str:
+    formatted_date = f"{report_date.day} {MONTHS_ES[report_date.month]} {report_date.year}"
+    ticket_count = count_daily_report_tickets(report_date)
+    values = {field: int(data.get(field, 0)) for field in DAILY_REPORT_FIELDS}
+    return "\n".join(
+        [
+            f"Hi Neil, here is my report of today Report - {formatted_date}",
+            "",
+            f"Tickets: {ticket_count}",
+            "",
+            "Jimi:",
+            f"-Inbound calls: {values['inbound_calls']}",
+            f"-Outbound calls: {values['outbound_calls']}",
+            f"-calls Failed to connect: {values['calls_failed']}",
+            f"-7 moor platform online chat: {values['moor_chat']}",
+            f"-Issues resolved over the first call: {values['first_call_resolved']}",
+            f"-Emails: {values['emails']}",
+            f"-Tickets needing HQ help or attention: {values['tickets_hq_help']}",
+        ]
+    )
+
+
 def update_ticket_estado(ticket_id: int, estado: str) -> None:
     estado = estado.strip()
     if estado not in DEFAULT_ESTADOS:
