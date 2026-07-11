@@ -91,6 +91,16 @@ def initialize_database() -> None:
                 after_data TEXT,
                 undone INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS daily_report_ticket_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha DATE NOT NULL,
+                ticket_id INTEGER NOT NULL,
+                included INTEGER NOT NULL CHECK (included IN (0, 1)),
+                updated_at DATETIME NOT NULL,
+                FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+                UNIQUE(fecha, ticket_id)
+            );
             """
         )
         _run_migrations(conn)

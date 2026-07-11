@@ -990,6 +990,7 @@ class DailyReportModal(ctk.CTkToplevel):
         self.report_date = parent._selected_date()
         self.values: dict[str, int] = {}
         self.value_labels: dict[str, ctk.CTkLabel] = {}
+        self.ticket_count_label: ctk.CTkLabel | None = None
 
         self.title("Reporte Diario")
         self.geometry("640x520")
@@ -1010,7 +1011,8 @@ class DailyReportModal(ctk.CTkToplevel):
             text=f"Reporte Diario - {formatted_date}",
             font=ctk.CTkFont(size=18, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
-        ctk.CTkLabel(header, text=f"Tickets del dia contados: {ticket_count}").grid(
+        self.ticket_count_label = ctk.CTkLabel(header, text=f"Tickets del dia contados: {ticket_count}")
+        self.ticket_count_label.grid(
             row=1, column=0, sticky="w", padx=12, pady=(0, 10)
         )
 
@@ -1045,17 +1047,24 @@ class DailyReportModal(ctk.CTkToplevel):
 
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 14))
-        buttons.grid_columnconfigure((0, 1), weight=1)
+        buttons.grid_columnconfigure((0, 1, 2), weight=1)
         ctk.CTkButton(buttons, text="Guardar", command=self._save).grid(
             row=0, column=0, sticky="ew", padx=(0, 6)
         )
+        ctk.CTkButton(
+            buttons,
+            text="Ver Tickets Contados",
+            command=self._open_ticket_details,
+            fg_color="#0891b2",
+            hover_color="#0e7490",
+        ).grid(row=0, column=1, sticky="ew", padx=6)
         ctk.CTkButton(
             buttons,
             text="Generar Mensaje y Copiar",
             command=self._copy_message,
             fg_color="#7c3aed",
             hover_color="#6d28d9",
-        ).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ).grid(row=0, column=2, sticky="ew", padx=(6, 0))
 
     def _collect_data(self) -> dict[str, int] | None:
         return dict(self.values)
@@ -1064,6 +1073,14 @@ class DailyReportModal(ctk.CTkToplevel):
         self.values[field] = max(0, self.values.get(field, 0) + delta)
         self.value_labels[field].configure(text=str(self.values[field]))
         services.save_daily_report(self.report_date, self.values)
+
+    def _refresh_ticket_count(self) -> None:
+        if self.ticket_count_label:
+            count = services.count_daily_report_tickets(self.report_date)
+            self.ticket_count_label.configure(text=f"Tickets del dia contados: {count}")
+
+    def _open_ticket_details(self) -> None:
+        DailyReportTicketsModal(self, self.report_date)
 
     def _save(self) -> bool:
         data = self._collect_data()
@@ -1085,6 +1102,129 @@ class DailyReportModal(ctk.CTkToplevel):
         self.update()
         self.parent._show_toast("Mensaje copiado al portapapeles.")
         self.destroy()
+
+
+class DailyReportTicketsModal(ctk.CTkToplevel):
+    def __init__(self, parent: DailyReportModal, report_date: date) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.report_date = report_date
+        self.include_vars: list[tk.BooleanVar] = []
+
+        self.title("Tickets Del Reporte Diario")
+        self.geometry("1160x620")
+        self.minsize(940, 520)
+        self.transient(parent)
+        self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        formatted_date = f"{report_date.day} {services.MONTHS_ES[report_date.month]} {report_date.year}"
+        header = ctk.CTkFrame(self)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text=f"Revision de tickets del reporte - {formatted_date}",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
+        self.count_label = ctk.CTkLabel(header, text="")
+        self.count_label.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 10))
+
+        self.list_frame = ctk.CTkScrollableFrame(self)
+        self.list_frame.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 14))
+        buttons.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkButton(
+            buttons,
+            text="Restaurar Automatico",
+            command=self._reset_automatic,
+            fg_color="#52525b",
+            hover_color="#3f3f46",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(buttons, text="Cerrar", command=self.destroy).grid(
+            row=0, column=1, sticky="ew", padx=(6, 0)
+        )
+
+        self._render_list()
+
+    def _render_list(self) -> None:
+        for widget in self.list_frame.winfo_children():
+            widget.destroy()
+        self.include_vars.clear()
+
+        details = services.get_daily_report_ticket_details(self.report_date)
+        included_count = sum(1 for ticket in details if ticket["included"])
+        self.count_label.configure(text=f"Incluidos: {included_count} | Total disponibles: {len(details)}")
+        self.parent._refresh_ticket_count()
+
+        headers = ["Incluir", "Origen", "Fecha", "Ticket", "Mail", "Phone", "Estado", "Problema", "Estado Actual"]
+        widths = [70, 145, 90, 135, 160, 105, 105, 190, 210]
+        for column, title in enumerate(headers):
+            ctk.CTkLabel(
+                self.list_frame,
+                text=title,
+                width=widths[column],
+                anchor="w",
+                font=ctk.CTkFont(weight="bold"),
+            ).grid(row=0, column=column, sticky="w", padx=4, pady=(4, 8))
+
+        if not details:
+            ctk.CTkLabel(self.list_frame, text="No hay tickets registrados.").grid(
+                row=1, column=0, columnspan=len(headers), sticky="w", padx=8, pady=16
+            )
+            return
+
+        for row_index, ticket in enumerate(details, start=1):
+            ticket_id = int(ticket["id"])
+            include_var = tk.BooleanVar(value=bool(ticket["included"]))
+            self.include_vars.append(include_var)
+            ctk.CTkCheckBox(
+                self.list_frame,
+                text="",
+                width=widths[0],
+                variable=include_var,
+                command=lambda tid=ticket_id, var=include_var: self._set_included(tid, var.get()),
+            ).grid(row=row_index, column=0, sticky="w", padx=8, pady=4)
+
+            values = [
+                ticket["origin"],
+                ticket["fecha_creacion"],
+                ticket.get("numero_ticket") or "-",
+                ticket.get("mail") or "-",
+                ticket.get("phone") or "-",
+                ticket["estado"],
+                ticket.get("problem_name") or "-",
+                ticket["estado_actual"],
+            ]
+            text_color = None if ticket["included"] else "#a1a1aa"
+            for column, value in enumerate(values, start=1):
+                ctk.CTkLabel(
+                    self.list_frame,
+                    text=self.parent.parent._short_text(str(value), widths[column]),
+                    width=widths[column],
+                    anchor="w",
+                    text_color=text_color,
+                ).grid(row=row_index, column=column, sticky="w", padx=4, pady=4)
+
+    def _set_included(self, ticket_id: int, included: bool) -> None:
+        services.set_daily_report_ticket_included(self.report_date, ticket_id, included)
+        self._render_list()
+        self.parent.parent._show_toast("Seleccion del reporte actualizada.")
+
+    def _reset_automatic(self) -> None:
+        confirmed = messagebox.askyesno(
+            "Restaurar automatico",
+            "Se eliminara la seleccion manual de esta fecha y se usara la regla automatica. Continuar?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        services.reset_daily_report_ticket_overrides(self.report_date)
+        self._render_list()
+        self.parent.parent._show_toast("Seleccion automatica restaurada.")
 
 
 class BulkTicketModal(ctk.CTkToplevel):

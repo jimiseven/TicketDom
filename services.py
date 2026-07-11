@@ -158,6 +158,36 @@ def _restore_daily_update(conn, before_update: dict[str, object] | None, ticket_
         )
 
 
+def _restore_daily_report_override(conn, before_override: dict[str, object] | None, report_date: str, ticket_id: int) -> None:
+    conn.execute("DELETE FROM daily_report_ticket_overrides WHERE fecha = ? AND ticket_id = ?", (report_date, ticket_id))
+    if before_override:
+        conn.execute(
+            """
+            INSERT INTO daily_report_ticket_overrides (id, fecha, ticket_id, included, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                before_override["id"],
+                before_override["fecha"],
+                before_override["ticket_id"],
+                before_override["included"],
+                before_override["updated_at"],
+            ),
+        )
+
+
+def _restore_daily_report_overrides(conn, before_overrides: list[dict[str, object]], report_date: str) -> None:
+    conn.execute("DELETE FROM daily_report_ticket_overrides WHERE fecha = ?", (report_date,))
+    for override in before_overrides:
+        conn.execute(
+            """
+            INSERT INTO daily_report_ticket_overrides (id, fecha, ticket_id, included, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (override["id"], override["fecha"], override["ticket_id"], override["included"], override["updated_at"]),
+        )
+
+
 def _mark_ticket_updated_with_conn(conn, ticket_id: int, update_date: date) -> None:
     conn.execute(
         """
@@ -474,21 +504,125 @@ def save_daily_report(report_date: date, data: dict[str, int]) -> None:
         )
 
 
-def count_daily_report_tickets(report_date: date) -> int:
+def _fetch_daily_report_override(conn, report_date: date, ticket_id: int) -> dict[str, object] | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM daily_report_ticket_overrides
+        WHERE fecha = ? AND ticket_id = ?
+        """,
+        (report_date.isoformat(), ticket_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _daily_report_origin(created_today: bool, updated_today: bool, included: bool, automatic: bool) -> str:
+    if created_today and updated_today:
+        return "Creado y actualizado"
+    if created_today:
+        return "Creado hoy"
+    if updated_today:
+        return "Actualizado hoy"
+    if included and not automatic:
+        return "Manual"
+    return "Fuera de regla"
+
+
+def get_daily_report_ticket_details(report_date: date) -> list[dict[str, object]]:
+    report_iso = report_date.isoformat()
     with get_connection() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT COUNT(DISTINCT tickets.id) AS total
+            SELECT
+                tickets.*,
+                ticket_daily_updates.ticket_id IS NOT NULL AS updated_today,
+                daily_report_ticket_overrides.included AS override_included
             FROM tickets
             LEFT JOIN ticket_daily_updates
               ON ticket_daily_updates.ticket_id = tickets.id
              AND ticket_daily_updates.fecha = ?
-            WHERE tickets.fecha_creacion = ?
-               OR ticket_daily_updates.ticket_id IS NOT NULL
+            LEFT JOIN daily_report_ticket_overrides
+              ON daily_report_ticket_overrides.ticket_id = tickets.id
+             AND daily_report_ticket_overrides.fecha = ?
+            ORDER BY tickets.fecha_creacion DESC, tickets.id DESC
             """,
-            (report_date.isoformat(), report_date.isoformat()),
-        ).fetchone()
-    return int(row["total"] or 0)
+            (report_iso, report_iso),
+        ).fetchall()
+
+    details: list[dict[str, object]] = []
+    for row in rows:
+        ticket = dict(row)
+        created_today = str(ticket["fecha_creacion"]) == report_iso
+        updated_today = bool(ticket["updated_today"])
+        automatic = created_today or updated_today
+        override = ticket["override_included"]
+        included = automatic if override is None else bool(override)
+        details.append(
+            {
+                **ticket,
+                "automatic": automatic,
+                "included": included,
+                "origin": _daily_report_origin(created_today, updated_today, included, automatic),
+            }
+        )
+
+    details.sort(
+        key=lambda ticket: (
+            bool(ticket["included"]),
+            bool(ticket["automatic"]),
+            str(ticket["fecha_creacion"]),
+            int(ticket["id"]),
+        ),
+        reverse=True,
+    )
+    return details
+
+
+def count_daily_report_tickets(report_date: date) -> int:
+    return sum(1 for ticket in get_daily_report_ticket_details(report_date) if ticket["included"])
+
+
+def set_daily_report_ticket_included(report_date: date, ticket_id: int, included: bool) -> None:
+    with get_connection() as conn:
+        before = _fetch_daily_report_override(conn, report_date, ticket_id)
+        conn.execute(
+            """
+            INSERT INTO daily_report_ticket_overrides (fecha, ticket_id, included, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(fecha, ticket_id) DO UPDATE SET
+                included = excluded.included,
+                updated_at = excluded.updated_at
+            """,
+            (report_date.isoformat(), ticket_id, 1 if included else 0, _now()),
+        )
+        after = _fetch_daily_report_override(conn, report_date, ticket_id)
+        _record_action(
+            conn,
+            "daily_report_ticket_override",
+            ticket_id,
+            {"override": before, "report_date": report_date.isoformat()},
+            {"override": after, "report_date": report_date.isoformat()},
+        )
+
+
+def reset_daily_report_ticket_overrides(report_date: date) -> None:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM daily_report_ticket_overrides WHERE fecha = ? ORDER BY id ASC",
+            (report_date.isoformat(),),
+        ).fetchall()
+        before = [dict(row) for row in rows]
+        if not before:
+            return
+
+        conn.execute("DELETE FROM daily_report_ticket_overrides WHERE fecha = ?", (report_date.isoformat(),))
+        _record_action(
+            conn,
+            "daily_report_reset_overrides",
+            None,
+            {"overrides": before, "report_date": report_date.isoformat()},
+            {"overrides": [], "report_date": report_date.isoformat()},
+        )
 
 
 def build_daily_report_message(report_date: date, data: dict[str, int]) -> str:
@@ -676,6 +810,12 @@ def revert_last_action() -> str | None:
         elif action_type in {"mark_updated", "unmark_updated"} and ticket_id and before:
             _restore_daily_update(conn, before.get("daily_update"), int(ticket_id), str(before["update_date"]))
             description = "Marca de actualizado revertida."
+        elif action_type == "daily_report_ticket_override" and ticket_id and before:
+            _restore_daily_report_override(conn, before.get("override"), str(before["report_date"]), int(ticket_id))
+            description = "Seleccion de ticket del reporte revertida."
+        elif action_type == "daily_report_reset_overrides" and before:
+            _restore_daily_report_overrides(conn, before.get("overrides", []), str(before["report_date"]))
+            description = "Seleccion del reporte restaurada."
         else:
             raise ValueError("No se pudo revertir la ultima accion.")
 
