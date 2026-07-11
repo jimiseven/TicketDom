@@ -171,9 +171,9 @@ class TicketApp(ctk.CTk):
             {"key": "select", "title": "Sel", "width": 44},
             {"key": "number", "title": "#", "width": 36},
             {"key": "days", "title": "Dias", "width": 48},
-            {"key": "fecha", "title": "Fecha", "width": 72},
+            {"key": "fecha", "title": "Fecha", "width": 90},
             {"key": "pais", "title": "Pais", "width": 80},
-            {"key": "ticket", "title": "Ticket", "width": 118},
+            {"key": "ticket", "title": "Ticket", "width": 180},
             {"key": "mail", "title": "Mail", "width": 125},
             {"key": "phone", "title": "Phone", "width": 90},
             {"key": "estado", "title": "Estado", "width": 112},
@@ -458,6 +458,7 @@ class TicketApp(ctk.CTk):
                         str(row_values.get(key, "") or "-"),
                         str(config["title"]),
                         text_color,
+                        key in {"mail", "phone"},
                     )
 
     def _render_header(self, column: int, config: dict[str, object]) -> None:
@@ -482,6 +483,7 @@ class TicketApp(ctk.CTk):
         full_text: str,
         title: str,
         text_color: str | None,
+        copy_on_click: bool = False,
     ) -> None:
         cell = ctk.CTkLabel(
             self.grid_frame,
@@ -491,23 +493,39 @@ class TicketApp(ctk.CTk):
             width=width,
         )
         cell.grid(row=row, column=column, sticky="w", padx=3, pady=4)
-        cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._show_cell_text(cell_title, text))
+        if copy_on_click:
+            cell.configure(cursor="hand2")
+            cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._copy_cell_text(cell_title, text))
+        else:
+            cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._show_cell_text(cell_title, text))
 
     def _render_ticket_button(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
         ticket_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
         ticket_cell.grid(row=row, column=column, sticky="w", padx=3, pady=3)
         ticket_cell.grid_propagate(False)
         ticket_cell.grid_columnconfigure(0, weight=1)
+        ticket_cell.grid_columnconfigure(1, weight=0)
         fg_color, hover_color = self._ticket_update_colors(ticket)
+        ticket_text = str(ticket["numero_ticket"] or "")
+        copy_width = max(58, width - 38)
         ctk.CTkButton(
             ticket_cell,
-            text=self._short_text(str(ticket["numero_ticket"] or "Progreso"), width),
-            width=width,
+            text=self._short_text(ticket_text or "Copiar", copy_width),
+            width=copy_width,
+            height=24,
+            fg_color=fg_color,
+            hover_color=hover_color,
+            command=lambda text=ticket_text: self._copy_cell_text("Ticket", text),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(
+            ticket_cell,
+            text="Ver",
+            width=34,
             height=24,
             fg_color=fg_color,
             hover_color=hover_color,
             command=lambda ticket_id=int(ticket["id"]): self._open_comments_modal(ticket_id),
-        ).grid(row=0, column=0, sticky="ew")
+        ).grid(row=0, column=1, sticky="e")
 
     def _ticket_update_colors(self, ticket: dict[str, object]) -> tuple[str | None, str | None]:
         estado = str(ticket["estado"]).lower()
@@ -676,6 +694,14 @@ class TicketApp(ctk.CTk):
         if text == "-":
             return
         messagebox.showinfo(title, text, parent=self)
+
+    def _copy_cell_text(self, title: str, text: str) -> None:
+        value = text.strip()
+        if not value or value == "-":
+            return
+        self.clipboard_clear()
+        self.clipboard_append(value)
+        self._show_toast(f"{title} copiado al portapapeles.")
 
     def _delete_ticket(self, ticket_id: int) -> None:
         confirmed = messagebox.askyesno(
