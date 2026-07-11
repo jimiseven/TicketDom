@@ -15,6 +15,67 @@ from database import DB_PATH, initialize_database
 ADD_NEW_OPTION = "<Añadir Nuevo...>"
 
 
+def _focus_next(event: tk.Event) -> str:
+    event.widget.tk_focusNext().focus_set()
+    return "break"
+
+
+def _focus_previous(event: tk.Event) -> str:
+    event.widget.tk_focusPrev().focus_set()
+    return "break"
+
+
+def _bind_textbox_navigation(textbox: ctk.CTkTextbox, submit_command=None) -> None:
+    def submit(_event: tk.Event) -> str:
+        if submit_command:
+            submit_command()
+        return "break"
+
+    for widget in (textbox, getattr(textbox, "_textbox", None)):
+        if widget is None:
+            continue
+        widget.bind("<Tab>", _focus_next)
+        widget.bind("<Shift-Tab>", _focus_previous)
+        widget.bind("<ISO_Left_Tab>", _focus_previous)
+        widget.bind("<Control-Return>", submit)
+        widget.bind("<Control-KP_Enter>", submit)
+
+
+def _event_in_textbox(widget: tk.Widget, textboxes: tuple[ctk.CTkTextbox, ...]) -> bool:
+    while widget is not None:
+        if any(widget == textbox or widget == getattr(textbox, "_textbox", None) for textbox in textboxes):
+            return True
+        widget = widget.master
+    return False
+
+
+def _bind_modal_shortcuts(
+    window: tk.Toplevel,
+    submit_command=None,
+    close_command=None,
+    textboxes: tuple[ctk.CTkTextbox, ...] = (),
+) -> None:
+    close = close_command or window.destroy
+
+    def close_handler(_event: tk.Event) -> str:
+        close()
+        return "break"
+
+    def submit_handler(event: tk.Event) -> str | None:
+        if _event_in_textbox(event.widget, textboxes):
+            return None
+        if submit_command:
+            submit_command()
+            return "break"
+        return None
+
+    window.bind("<Escape>", close_handler)
+    window.bind("<Return>", submit_handler)
+    window.bind("<KP_Enter>", submit_handler)
+    for textbox in textboxes:
+        _bind_textbox_navigation(textbox, submit_command)
+
+
 class TicketApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
@@ -1065,6 +1126,7 @@ class DailyReportModal(ctk.CTkToplevel):
             fg_color="#7c3aed",
             hover_color="#6d28d9",
         ).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        _bind_modal_shortcuts(self, close_command=self.destroy)
 
     def _collect_data(self) -> dict[str, int] | None:
         return dict(self.values)
@@ -1148,6 +1210,7 @@ class DailyReportTicketsModal(ctk.CTkToplevel):
             row=0, column=1, sticky="ew", padx=(6, 0)
         )
 
+        _bind_modal_shortcuts(self, close_command=self.destroy)
         self._render_list()
 
     def _render_list(self) -> None:
@@ -1265,6 +1328,7 @@ class BulkTicketModal(ctk.CTkToplevel):
         self.result_label = ctk.CTkLabel(self, text="Pega una columna de Excel en Tickets y otra en Problemas.", anchor="w")
         self.result_label.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 14))
 
+        _bind_modal_shortcuts(self, submit_command=self._save, close_command=self.destroy)
         self._render_preview()
 
     def _paste_column(self, target: str) -> None:
@@ -1424,6 +1488,8 @@ class CreateTicketModal(ctk.CTkToplevel):
         ctk.CTkButton(buttons, text="Cancelar", command=self.destroy, fg_color="#52525b").grid(
             row=0, column=1, sticky="ew", padx=(6, 0)
         )
+        _bind_modal_shortcuts(self, submit_command=self._save, close_command=self.destroy, textboxes=(self.description_text,))
+        self.after(100, self.ticket_entry.focus_set)
 
     def _entry(self, row: int, column: int, label: str, value: str, columnspan: int = 1) -> ctk.CTkEntry:
         ctk.CTkLabel(self.body, text=label).grid(row=row, column=column, columnspan=columnspan, sticky="w", padx=10)
@@ -1566,6 +1632,8 @@ class EditTicketModal(ctk.CTkToplevel):
         ctk.CTkButton(buttons, text="Cancelar", command=self.destroy, fg_color="#52525b").grid(
             row=0, column=1, sticky="ew", padx=(6, 0)
         )
+        _bind_modal_shortcuts(self, submit_command=self._save, close_command=self.destroy, textboxes=(self.description_text,))
+        self.after(100, self.ticket_entry.focus_set)
 
     def _entry(self, row: int, column: int, label: str, value: str, columnspan: int = 1) -> ctk.CTkEntry:
         ctk.CTkLabel(self.body, text=label).grid(row=row, column=column, columnspan=columnspan, sticky="w", padx=10)
@@ -1678,6 +1746,8 @@ class CommentsModal(ctk.CTkToplevel):
         ctk.CTkButton(input_frame, text="Agregar Comentario", command=self._add_comment).grid(
             row=0, column=1, padx=(0, 8), pady=10
         )
+        _bind_modal_shortcuts(self, submit_command=self._add_comment, close_command=self.destroy, textboxes=(self.comment_text,))
+        self.after(100, self.comment_text.focus_set)
         self._load_comments()
 
     def _load_comments(self) -> None:
