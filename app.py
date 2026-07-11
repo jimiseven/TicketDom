@@ -33,6 +33,7 @@ class TicketApp(ctk.CTk):
         self.updated_ticket_ids: set[int] = set()
         self.table_columns = self._default_table_columns()
         self.header_drag: dict[str, object] | None = None
+        self.sort_config: dict[str, str] | None = None
 
         self._build_layout()
         self._reload_dynamic_options()
@@ -174,6 +175,7 @@ class TicketApp(ctk.CTk):
             {"key": "fecha", "title": "Fecha", "width": 90},
             {"key": "pais", "title": "Pais", "width": 80},
             {"key": "ticket", "title": "Ticket", "width": 180},
+            {"key": "updated", "title": "Actualizado", "width": 130},
             {"key": "mail", "title": "Mail", "width": 125},
             {"key": "phone", "title": "Phone", "width": 90},
             {"key": "estado", "title": "Estado", "width": 112},
@@ -227,7 +229,8 @@ class TicketApp(ctk.CTk):
 
     def _reset_table_columns(self) -> None:
         self.table_columns = self._default_table_columns()
-        self._render_ticket_grid()
+        self.sort_config = None
+        self._load_tickets()
 
     def _export_database(self) -> None:
         target_path = filedialog.asksaveasfilename(
@@ -410,6 +413,7 @@ class TicketApp(ctk.CTk):
         visible_ids = {int(ticket["id"]) for ticket in self.visible_tickets}
         self.selected_ticket_ids.intersection_update(visible_ids)
         self.updated_ticket_ids = services.get_updated_ticket_ids(sorted(visible_ids), self._selected_date())
+        self._apply_sort()
         self._render_ticket_grid()
 
     def _render_ticket_grid(self) -> None:
@@ -436,6 +440,7 @@ class TicketApp(ctk.CTk):
                 "mail": ticket["mail"],
                 "phone": ticket.get("phone", ""),
                 "problem": ticket["problem_name"],
+                "updated": self._ticket_update_status(ticket),
             }
             for column, config in enumerate(self.table_columns):
                 key = str(config["key"])
@@ -464,6 +469,35 @@ class TicketApp(ctk.CTk):
     def _render_header(self, column: int, config: dict[str, object]) -> None:
         width = int(config["width"])
         title = str(config["title"])
+        key = str(config["key"])
+        if key in {"fecha", "updated"}:
+            sort_mark = ""
+            if self.sort_config and self.sort_config["key"] == key:
+                sort_mark = " +" if self.sort_config["direction"] == "asc" else " -"
+
+            frame = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
+            frame.grid(row=0, column=column, sticky="w", padx=3, pady=(6, 8))
+            frame.grid_propagate(False)
+            label_width = max(38, width - 38)
+            label = ctk.CTkLabel(
+                frame,
+                text=f"{title}{sort_mark}  |",
+                width=label_width,
+                anchor="w",
+                font=ctk.CTkFont(weight="bold"),
+            )
+            label.grid(row=0, column=0, sticky="w")
+            label.bind("<ButtonPress-1>", lambda event, header_key=key: self._start_header_drag(event, header_key))
+            label.bind("<Motion>", lambda event, widget=label: self._set_header_cursor(event, widget))
+            ctk.CTkButton(
+                frame,
+                text="Ord",
+                width=34,
+                height=22,
+                command=lambda header_key=key: self._toggle_sort(header_key),
+            ).grid(row=0, column=1, sticky="e")
+            return
+
         label = ctk.CTkLabel(
             self.grid_frame,
             text=f"{title}  |",
@@ -472,7 +506,7 @@ class TicketApp(ctk.CTk):
             font=ctk.CTkFont(weight="bold"),
         )
         label.grid(row=0, column=column, sticky="w", padx=3, pady=(6, 8))
-        label.bind("<ButtonPress-1>", lambda event, key=config["key"]: self._start_header_drag(event, str(key)))
+        label.bind("<ButtonPress-1>", lambda event, header_key=key: self._start_header_drag(event, header_key))
         label.bind("<Motion>", lambda event, widget=label: self._set_header_cursor(event, widget))
 
     def _render_text_cell(
@@ -538,6 +572,41 @@ class TicketApp(ctk.CTk):
         if created_date == selected_date or ticket_id in self.updated_ticket_ids:
             return "#16a34a", "#15803d"
         return "#dc2626", "#991b1b"
+
+    def _ticket_update_status(self, ticket: dict[str, object]) -> str:
+        estado = str(ticket["estado"]).lower()
+        if estado not in {"respondido", "pendiente", "critico"}:
+            return "-"
+
+        ticket_id = int(ticket["id"])
+        if str(ticket["fecha_creacion"]) == self._selected_date().isoformat() or ticket_id in self.updated_ticket_ids:
+            return "Si"
+        return "No"
+
+    def _toggle_sort(self, key: str) -> None:
+        if self.sort_config and self.sort_config["key"] == key:
+            direction = "desc" if self.sort_config["direction"] == "asc" else "asc"
+        else:
+            direction = "asc"
+
+        self.sort_config = {"key": key, "direction": direction}
+        self._apply_sort()
+        self._render_ticket_grid()
+
+    def _apply_sort(self) -> None:
+        if not self.sort_config:
+            return
+
+        key = self.sort_config["key"]
+        reverse = self.sort_config["direction"] == "desc"
+        if key == "fecha":
+            self.visible_tickets.sort(key=lambda ticket: (str(ticket["fecha_creacion"]), int(ticket["id"])), reverse=reverse)
+        elif key == "updated":
+            status_order = {"No": 0, "Si": 1, "-": 2}
+            self.visible_tickets.sort(
+                key=lambda ticket: (status_order[self._ticket_update_status(ticket)], str(ticket["fecha_creacion"])),
+                reverse=reverse,
+            )
 
     def _render_select_checkbox(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
         ticket_id = int(ticket["id"])
