@@ -81,6 +81,16 @@ def initialize_database() -> None:
                 FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
                 UNIQUE(ticket_id, fecha)
             );
+
+            CREATE TABLE IF NOT EXISTS action_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                ticket_id INTEGER,
+                created_at DATETIME NOT NULL,
+                before_data TEXT,
+                after_data TEXT,
+                undone INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         _run_migrations(conn)

@@ -128,6 +128,14 @@ class TicketApp(ctk.CTk):
         )
         ctk.CTkButton(
             top_bar,
+            text="Revertir",
+            command=self._revert_last_action,
+            fg_color="#9333ea",
+            hover_color="#7e22ce",
+            width=105,
+        ).grid(row=1, column=6, padx=4, pady=(0, 10))
+        ctk.CTkButton(
+            top_bar,
             text="Actualizar Tabla",
             command=self._load_tickets,
             fg_color="#2563eb",
@@ -500,7 +508,7 @@ class TicketApp(ctk.CTk):
                 elif key == "estado_actual":
                     self._render_estado_actual_combo(row_index, column, width, ticket)
                 elif key == "updated":
-                    self._render_updated_cell(row_index, column, width, self._ticket_update_status(ticket))
+                    self._render_updated_cell(row_index, column, width, ticket)
                 else:
                     self._render_text_cell(
                         row_index,
@@ -578,24 +586,41 @@ class TicketApp(ctk.CTk):
         else:
             cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._show_cell_text(cell_title, text))
 
-    def _render_updated_cell(self, row: int, column: int, width: int, status: str) -> None:
+    def _render_updated_cell(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
+        status = self._ticket_update_status(ticket)
         colors = {
-            "Si": ("#166534", "#dcfce7"),
-            "No": ("#991b1b", "#fee2e2"),
-            "-": ("#3f3f46", "#e4e4e7"),
+            "Si": ("#166534", "#15803d", "#dcfce7"),
+            "No": ("#991b1b", "#7f1d1d", "#fee2e2"),
+            "-": ("#3f3f46", "#3f3f46", "#e4e4e7"),
         }
-        fg_color, text_color = colors.get(status, colors["-"])
-        label = ctk.CTkLabel(
+        fg_color, hover_color, text_color = colors.get(status, colors["-"])
+        if status == "-":
+            label = ctk.CTkLabel(
+                self.grid_frame,
+                text=status,
+                width=width,
+                height=24,
+                fg_color=fg_color,
+                text_color=text_color,
+                corner_radius=8,
+                font=ctk.CTkFont(weight="bold"),
+            )
+            label.grid(row=row, column=column, sticky="w", padx=3, pady=4)
+            return
+
+        button = ctk.CTkButton(
             self.grid_frame,
             text=status,
             width=width,
             height=24,
             fg_color=fg_color,
+            hover_color=hover_color,
             text_color=text_color,
             corner_radius=8,
             font=ctk.CTkFont(weight="bold"),
+            command=lambda ticket_id=int(ticket["id"]), current=status: self._toggle_ticket_updated(ticket_id, current),
         )
-        label.grid(row=row, column=column, sticky="w", padx=3, pady=4)
+        button.grid(row=row, column=column, sticky="w", padx=3, pady=4)
 
     def _render_ticket_button(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
         ticket_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
@@ -617,7 +642,7 @@ class TicketApp(ctk.CTk):
         ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ctk.CTkButton(
             ticket_cell,
-            text="Ver",
+            text="C",
             width=34,
             height=24,
             fg_color=fg_color,
@@ -631,9 +656,7 @@ class TicketApp(ctk.CTk):
             return None, None
 
         ticket_id = int(ticket["id"])
-        created_date = str(ticket["fecha_creacion"])
-        selected_date = self._selected_date().isoformat()
-        if created_date == selected_date or ticket_id in self.updated_ticket_ids:
+        if ticket_id in self.updated_ticket_ids:
             return "#16a34a", "#15803d"
         return "#dc2626", "#991b1b"
 
@@ -643,9 +666,19 @@ class TicketApp(ctk.CTk):
             return "-"
 
         ticket_id = int(ticket["id"])
-        if str(ticket["fecha_creacion"]) == self._selected_date().isoformat() or ticket_id in self.updated_ticket_ids:
+        if ticket_id in self.updated_ticket_ids:
             return "Si"
         return "No"
+
+    def _toggle_ticket_updated(self, ticket_id: int, current_status: str) -> None:
+        if current_status == "Si":
+            services.unmark_ticket_updated(ticket_id, self._selected_date())
+            message = "Ticket marcado como no actualizado."
+        else:
+            services.mark_ticket_updated(ticket_id, self._selected_date())
+            message = "Ticket marcado como actualizado."
+        self._load_tickets()
+        self._show_toast(message)
 
     def _toggle_sort(self, key: str) -> None:
         if self.sort_config and self.sort_config["key"] == key:
@@ -872,10 +905,32 @@ class TicketApp(ctk.CTk):
         self._load_tickets()
         messagebox.showinfo("Eliminar marcados", f"Se eliminaron {count} ticket(s).", parent=self)
 
+    def _revert_last_action(self) -> None:
+        confirmed = messagebox.askyesno(
+            "Revertir ultima accion",
+            "Se revertira la ultima accion registrada. Continuar?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+
+        try:
+            message = services.revert_last_action()
+        except ValueError as exc:
+            messagebox.showerror("Revertir ultima accion", str(exc), parent=self)
+            return
+
+        if not message:
+            messagebox.showinfo("Revertir ultima accion", "No hay acciones para revertir.", parent=self)
+            return
+
+        self.selected_ticket_ids.clear()
+        self._load_tickets()
+        self._show_toast(message)
+
     def _update_ticket_estado(self, ticket_id: int, estado: str) -> None:
         try:
             services.update_ticket_estado(ticket_id, estado)
-            services.mark_ticket_updated(ticket_id, self._selected_date())
         except ValueError as exc:
             messagebox.showerror("Estado invalido", str(exc), parent=self)
             self._load_tickets()
@@ -885,7 +940,6 @@ class TicketApp(ctk.CTk):
     def _update_ticket_estado_actual(self, ticket_id: int, estado_actual: str) -> None:
         try:
             services.update_ticket_estado_actual(ticket_id, estado_actual)
-            services.mark_ticket_updated(ticket_id, self._selected_date())
         except ValueError as exc:
             messagebox.showerror("Estado actual invalido", str(exc), parent=self)
             self._load_tickets()
@@ -1451,7 +1505,6 @@ class EditTicketModal(ctk.CTkToplevel):
         }
         try:
             services.update_ticket(self.ticket_id, data)
-            services.mark_ticket_updated(self.ticket_id, self.parent._selected_date())
         except ValueError as exc:
             messagebox.showerror("Datos invalidos", str(exc), parent=self)
             return
@@ -1485,16 +1538,6 @@ class CommentsModal(ctk.CTkToplevel):
         ctk.CTkButton(input_frame, text="Agregar Comentario", command=self._add_comment).grid(
             row=0, column=1, padx=(0, 8), pady=10
         )
-        ctk.CTkButton(
-            input_frame,
-            text="Marcar Actualizado",
-            command=self._mark_updated,
-            fg_color="#16a34a",
-            hover_color="#15803d",
-        ).grid(
-            row=0, column=2, padx=(0, 10), pady=10
-        )
-
         self._load_comments()
 
     def _load_comments(self) -> None:
@@ -1526,15 +1569,8 @@ class CommentsModal(ctk.CTkToplevel):
             messagebox.showerror("Comentario invalido", str(exc), parent=self)
             return
         self.comment_text.delete("1.0", "end")
-        services.mark_ticket_updated(self.ticket_id, self.parent._selected_date())
         self.parent._load_tickets()
         self._load_comments()
-
-    def _mark_updated(self) -> None:
-        services.mark_ticket_updated(self.ticket_id, self.parent._selected_date())
-        self.parent._load_tickets()
-        self.parent._show_toast("Ticket marcado como actualizado.")
-
 
 if __name__ == "__main__":
     app = TicketApp()
