@@ -223,6 +223,14 @@ class TicketApp(ctk.CTk):
             fg_color="#7c3aed",
             hover_color="#6d28d9",
         ).grid(row=1, column=8, padx=(6, 16), pady=(0, 10))
+        ctk.CTkButton(
+            top_bar,
+            text="Historial",
+            command=self._open_history_modal,
+            fg_color="#475569",
+            hover_color="#334155",
+            width=100,
+        ).grid(row=0, column=9, padx=(0, 16), pady=12)
 
         self.table_container = ctk.CTkFrame(self)
         self.table_container.grid(row=1, column=0, sticky="nsew", padx=12, pady=12)
@@ -275,6 +283,7 @@ class TicketApp(ctk.CTk):
             {"key": "phone", "title": "Phone", "width": 90},
             {"key": "estado", "title": "Estado", "width": 112},
             {"key": "problem", "title": "Problema", "width": 135},
+            {"key": "last_comment", "title": "Ultimo Comentario", "width": 190},
             {"key": "estado_actual", "title": "Estado Actual", "width": 145},
             {"key": "actions", "title": "Opciones", "width": 150},
         ]
@@ -306,6 +315,9 @@ class TicketApp(ctk.CTk):
 
     def _open_daily_report_modal(self) -> None:
         DailyReportModal(self)
+
+    def _open_history_modal(self) -> None:
+        ActionHistoryModal(self)
 
     def _show_toast(self, message: str) -> None:
         toast = ctk.CTkToplevel(self)
@@ -553,6 +565,7 @@ class TicketApp(ctk.CTk):
                 "mail": ticket["mail"],
                 "phone": ticket.get("phone", ""),
                 "problem": ticket["problem_name"],
+                "last_comment": ticket.get("last_comment") or "-",
                 "updated": self._ticket_update_status(ticket),
             }
             for column, config in enumerate(self.table_columns):
@@ -643,7 +656,10 @@ class TicketApp(ctk.CTk):
         cell.grid(row=row, column=column, sticky="w", padx=3, pady=4)
         if copy_on_click:
             cell.configure(cursor="hand2")
-            cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._copy_cell_text(cell_title, text))
+            cell.bind(
+                "<Button-1>",
+                lambda _event, cell_title=title, text=full_text, widget=cell: self._copy_cell_text(cell_title, text, widget),
+            )
         else:
             cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._show_cell_text(cell_title, text))
 
@@ -692,24 +708,29 @@ class TicketApp(ctk.CTk):
         fg_color, hover_color = self._ticket_update_colors(ticket)
         ticket_text = str(ticket["numero_ticket"] or "")
         copy_width = max(58, width - 38)
-        ctk.CTkButton(
+        copy_button = ctk.CTkButton(
             ticket_cell,
             text=self._short_text(ticket_text or "Copiar", copy_width),
             width=copy_width,
             height=24,
             fg_color=fg_color,
             hover_color=hover_color,
-            command=lambda text=ticket_text: self._copy_cell_text("Ticket", text),
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        )
+        copy_button.configure(command=lambda text=ticket_text, widget=copy_button: self._copy_cell_text("Ticket", text, widget))
+        copy_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ctk.CTkButton(
             ticket_cell,
-            text="C",
+            text=self._comment_button_text(ticket),
             width=34,
             height=24,
             fg_color=fg_color,
             hover_color=hover_color,
             command=lambda ticket_id=int(ticket["id"]): self._open_comments_modal(ticket_id),
         ).grid(row=0, column=1, sticky="e")
+
+    def _comment_button_text(self, ticket: dict[str, object]) -> str:
+        count = int(ticket.get("comment_count") or 0)
+        return f"C{count}" if count else "C"
 
     def _ticket_update_colors(self, ticket: dict[str, object]) -> tuple[str | None, str | None]:
         estado = str(ticket["estado"]).lower()
@@ -927,13 +948,42 @@ class TicketApp(ctk.CTk):
             return
         messagebox.showinfo(title, text, parent=self)
 
-    def _copy_cell_text(self, title: str, text: str) -> None:
+    def _copy_cell_text(self, title: str, text: str, widget: tk.Widget | None = None) -> None:
         value = text.strip()
         if not value or value == "-":
             return
         self.clipboard_clear()
         self.clipboard_append(value)
-        self._show_toast(f"{title} copiado al portapapeles.")
+        if widget is not None:
+            self._flash_copied_widget(widget)
+
+    def _flash_copied_widget(self, widget: tk.Widget) -> None:
+        try:
+            original_fg = widget.cget("fg_color")
+        except Exception:
+            original_fg = None
+        try:
+            original_text = widget.cget("text_color")
+        except Exception:
+            original_text = None
+
+        try:
+            widget.configure(fg_color="#facc15", text_color="#111827")
+            widget.after(450, lambda: self._restore_flash_widget(widget, original_fg, original_text))
+        except Exception:
+            pass
+
+    def _restore_flash_widget(self, widget: tk.Widget, fg_color: object, text_color: object) -> None:
+        try:
+            config = {}
+            if fg_color is not None:
+                config["fg_color"] = fg_color
+            if text_color is not None:
+                config["text_color"] = text_color
+            if config:
+                widget.configure(**config)
+        except Exception:
+            pass
 
     def _delete_ticket(self, ticket_id: int) -> None:
         confirmed = messagebox.askyesno(
@@ -1032,6 +1082,74 @@ class TicketApp(ctk.CTk):
         self.clipboard_append(report)
         self.update()
         messagebox.showinfo("Reporte SMS", "Reporte copiado al portapapeles.", parent=self)
+
+
+class ActionHistoryModal(ctk.CTkToplevel):
+    def __init__(self, parent: TicketApp) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.title("Historial de Acciones")
+        self.geometry("780x520")
+        self.minsize(680, 420)
+        self.transient(parent)
+        self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text="Historial de acciones recientes",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=10)
+
+        self.list_frame = ctk.CTkScrollableFrame(self)
+        self.list_frame.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 14))
+        buttons.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(buttons, text="Cerrar", command=self.destroy).grid(row=0, column=0, sticky="e")
+
+        _bind_modal_shortcuts(self, close_command=self.destroy)
+        self._render_history()
+
+    def _render_history(self) -> None:
+        for widget in self.list_frame.winfo_children():
+            widget.destroy()
+
+        history = services.get_action_history()
+        headers = ["Fecha/Hora", "Accion", "Ticket", "Estado"]
+        widths = [155, 230, 210, 120]
+        for column, title in enumerate(headers):
+            ctk.CTkLabel(
+                self.list_frame,
+                text=title,
+                width=widths[column],
+                anchor="w",
+                font=ctk.CTkFont(weight="bold"),
+            ).grid(row=0, column=column, sticky="w", padx=4, pady=(6, 8))
+
+        if not history:
+            ctk.CTkLabel(self.list_frame, text="No hay acciones registradas.").grid(
+                row=1, column=0, columnspan=len(headers), sticky="w", padx=8, pady=16
+            )
+            return
+
+        for row, action in enumerate(history, start=1):
+            status = "Revertida" if action["undone"] else "Activa"
+            text_color = "#a1a1aa" if action["undone"] else None
+            values = [action["created_at"], action["action"], action["ticket"], status]
+            for column, value in enumerate(values):
+                ctk.CTkLabel(
+                    self.list_frame,
+                    text=self.parent._short_text(str(value), widths[column]),
+                    width=widths[column],
+                    anchor="w",
+                    text_color=text_color,
+                ).grid(row=row, column=column, sticky="w", padx=4, pady=4)
 
 
 class DailyReportModal(ctk.CTkToplevel):

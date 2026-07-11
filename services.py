@@ -418,7 +418,21 @@ def get_visible_tickets(selected_date: date) -> list[dict[str, object]]:
         if selected_iso == today_iso:
             rows = conn.execute(
                 """
-                SELECT tickets.*, fecha_creacion < ? AS is_rollover
+                SELECT
+                    tickets.*,
+                    fecha_creacion < ? AS is_rollover,
+                    (
+                        SELECT comentarios.comentario
+                        FROM comentarios
+                        WHERE comentarios.ticket_id = tickets.id
+                        ORDER BY comentarios.fecha_hora DESC, comentarios.id DESC
+                        LIMIT 1
+                    ) AS last_comment,
+                    (
+                        SELECT COUNT(*)
+                        FROM comentarios
+                        WHERE comentarios.ticket_id = tickets.id
+                    ) AS comment_count
                 FROM tickets
                 LEFT JOIN ticket_daily_status_changes
                   ON ticket_daily_status_changes.ticket_id = tickets.id
@@ -433,7 +447,21 @@ def get_visible_tickets(selected_date: date) -> list[dict[str, object]]:
         else:
             rows = conn.execute(
                 """
-                SELECT tickets.*, 0 AS is_rollover
+                SELECT
+                    tickets.*,
+                    0 AS is_rollover,
+                    (
+                        SELECT comentarios.comentario
+                        FROM comentarios
+                        WHERE comentarios.ticket_id = tickets.id
+                        ORDER BY comentarios.fecha_hora DESC, comentarios.id DESC
+                        LIMIT 1
+                    ) AS last_comment,
+                    (
+                        SELECT COUNT(*)
+                        FROM comentarios
+                        WHERE comentarios.ticket_id = tickets.id
+                    ) AS comment_count
                 FROM tickets
                 LEFT JOIN ticket_daily_status_changes
                   ON ticket_daily_status_changes.ticket_id = tickets.id
@@ -959,6 +987,72 @@ def revert_last_action() -> str | None:
 
         conn.execute("UPDATE action_history SET undone = 1 WHERE id = ?", (action["id"],))
         return description
+
+
+ACTION_LABELS = {
+    "create_ticket": "Creo ticket",
+    "update_ticket": "Edito ticket",
+    "delete_ticket": "Elimino ticket",
+    "delete_tickets": "Elimino varios tickets",
+    "update_estado": "Cambio estado",
+    "update_estado_actual": "Cambio estado actual",
+    "add_comment": "Agrego comentario",
+    "mark_updated": "Marco actualizado",
+    "unmark_updated": "Marco no actualizado",
+    "daily_report_ticket_override": "Ajusto ticket de reporte",
+    "daily_report_reset_overrides": "Restauro reporte automatico",
+}
+
+
+def _extract_ticket_number_from_payload(payload: object) -> str:
+    if isinstance(payload, dict):
+        ticket = payload.get("ticket") if "ticket" in payload else payload
+        if isinstance(ticket, dict) and ticket.get("numero_ticket"):
+            return str(ticket["numero_ticket"])
+        comment = payload.get("comment")
+        if isinstance(comment, dict) and comment.get("ticket_id"):
+            return f"ID {comment['ticket_id']}"
+    if isinstance(payload, list):
+        tickets = [
+            str(item["ticket"]["numero_ticket"])
+            for item in payload
+            if isinstance(item, dict)
+            and isinstance(item.get("ticket"), dict)
+            and item["ticket"].get("numero_ticket")
+        ]
+        if tickets:
+            return ", ".join(tickets[:3]) + ("..." if len(tickets) > 3 else "")
+    return ""
+
+
+def get_action_history(limit: int = 80) -> list[dict[str, object]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT action_history.*, tickets.numero_ticket AS current_ticket
+            FROM action_history
+            LEFT JOIN tickets ON tickets.id = action_history.ticket_id
+            ORDER BY action_history.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    history: list[dict[str, object]] = []
+    for row in rows:
+        action = dict(row)
+        before = json.loads(action["before_data"]) if action["before_data"] else None
+        after = json.loads(action["after_data"]) if action["after_data"] else None
+        ticket_number = action.get("current_ticket") or _extract_ticket_number_from_payload(after) or _extract_ticket_number_from_payload(before) or "-"
+        history.append(
+            {
+                "created_at": action["created_at"],
+                "action": ACTION_LABELS.get(str(action["action_type"]), str(action["action_type"])),
+                "ticket": ticket_number,
+                "undone": bool(action["undone"]),
+            }
+        )
+    return history
 
 
 def build_sms_report(visible_tickets: Iterable[dict[str, object]], report_date: date) -> str:
