@@ -177,7 +177,7 @@ def get_visible_tickets(selected_date: date) -> list[dict[str, object]]:
                 FROM tickets
                 WHERE fecha_creacion = ?
                    OR (fecha_creacion < ? AND estado IN ('respondido', 'pendiente', 'critico'))
-                ORDER BY is_rollover DESC, fecha_creacion ASC, id DESC
+                ORDER BY is_rollover ASC, fecha_creacion DESC, id DESC
                 """,
                 (today_iso, today_iso, today_iso),
             ).fetchall()

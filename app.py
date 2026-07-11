@@ -34,6 +34,7 @@ class TicketApp(ctk.CTk):
         self.table_columns = self._default_table_columns()
         self.header_drag: dict[str, object] | None = None
         self.sort_config: dict[str, str] | None = None
+        self.search_var = tk.StringVar()
 
         self._build_layout()
         self._reload_dynamic_options()
@@ -86,6 +87,31 @@ class TicketApp(ctk.CTk):
             hover_color="#0e7490",
             width=90,
         ).grid(row=1, column=3, padx=8, pady=(0, 10))
+
+        search_frame = ctk.CTkFrame(top_bar, fg_color="transparent")
+        search_frame.grid(row=0, column=4, rowspan=2, sticky="ew", padx=8, pady=8)
+        search_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(search_frame, text="Buscar:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, padx=(0, 6), pady=(0, 4)
+        )
+        search_entry = ctk.CTkEntry(
+            search_frame,
+            textvariable=self.search_var,
+            placeholder_text="Ticket, correo o telefono",
+        )
+        search_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 4))
+        search_entry.bind("<Return>", lambda _event: self._load_tickets())
+        ctk.CTkButton(search_frame, text="Buscar", command=self._load_tickets, width=82).grid(
+            row=1, column=1, sticky="e", padx=(0, 6)
+        )
+        ctk.CTkButton(
+            search_frame,
+            text="Limpiar",
+            command=self._clear_search,
+            width=82,
+            fg_color="#52525b",
+            hover_color="#3f3f46",
+        ).grid(row=1, column=2, sticky="e")
         ctk.CTkButton(
             top_bar,
             text="Defecto",
@@ -370,6 +396,10 @@ class TicketApp(ctk.CTk):
         self.date_entry.set_date(self._selected_date() + timedelta(days=days))
         self._load_tickets()
 
+    def _clear_search(self) -> None:
+        self.search_var.set("")
+        self._load_tickets()
+
     def _save_ticket(self) -> None:
         data = {
             "fecha_creacion": self._selected_date().isoformat(),
@@ -410,11 +440,25 @@ class TicketApp(ctk.CTk):
 
     def _load_tickets(self) -> None:
         self.visible_tickets = services.get_visible_tickets(self._selected_date())
+        self._apply_search_filter()
         visible_ids = {int(ticket["id"]) for ticket in self.visible_tickets}
         self.selected_ticket_ids.intersection_update(visible_ids)
         self.updated_ticket_ids = services.get_updated_ticket_ids(sorted(visible_ids), self._selected_date())
         self._apply_sort()
         self._render_ticket_grid()
+
+    def _apply_search_filter(self) -> None:
+        query = self.search_var.get().strip().lower()
+        if not query:
+            return
+
+        self.visible_tickets = [
+            ticket
+            for ticket in self.visible_tickets
+            if query in str(ticket.get("numero_ticket") or "").lower()
+            or query in str(ticket.get("mail") or "").lower()
+            or query in str(ticket.get("phone") or "").lower()
+        ]
 
     def _render_ticket_grid(self) -> None:
         for widget in self.grid_frame.winfo_children():
@@ -455,6 +499,8 @@ class TicketApp(ctk.CTk):
                     self._render_estado_combo(row_index, column, width, ticket)
                 elif key == "estado_actual":
                     self._render_estado_actual_combo(row_index, column, width, ticket)
+                elif key == "updated":
+                    self._render_updated_cell(row_index, column, width, self._ticket_update_status(ticket))
                 else:
                     self._render_text_cell(
                         row_index,
@@ -471,29 +517,28 @@ class TicketApp(ctk.CTk):
         title = str(config["title"])
         key = str(config["key"])
         if key in {"fecha", "updated"}:
-            sort_mark = ""
-            if self.sort_config and self.sort_config["key"] == key:
-                sort_mark = " +" if self.sort_config["direction"] == "asc" else " -"
-
             frame = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
             frame.grid(row=0, column=column, sticky="w", padx=3, pady=(6, 8))
             frame.grid_propagate(False)
-            label_width = max(38, width - 38)
+            frame.grid_columnconfigure(0, weight=1)
+            label_width = max(38, width - 34)
             label = ctk.CTkLabel(
                 frame,
-                text=f"{title}{sort_mark}  |",
+                text=title,
                 width=label_width,
                 anchor="w",
                 font=ctk.CTkFont(weight="bold"),
             )
-            label.grid(row=0, column=0, sticky="w")
+            label.grid(row=0, column=0, sticky="ew")
             label.bind("<ButtonPress-1>", lambda event, header_key=key: self._start_header_drag(event, header_key))
             label.bind("<Motion>", lambda event, widget=label: self._set_header_cursor(event, widget))
             ctk.CTkButton(
                 frame,
-                text="Ord",
-                width=34,
-                height=22,
+                text=self._sort_button_text(key),
+                width=28,
+                height=24,
+                fg_color="#3f3f46",
+                hover_color="#52525b",
                 command=lambda header_key=key: self._toggle_sort(header_key),
             ).grid(row=0, column=1, sticky="e")
             return
@@ -532,6 +577,25 @@ class TicketApp(ctk.CTk):
             cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._copy_cell_text(cell_title, text))
         else:
             cell.bind("<Button-1>", lambda _event, cell_title=title, text=full_text: self._show_cell_text(cell_title, text))
+
+    def _render_updated_cell(self, row: int, column: int, width: int, status: str) -> None:
+        colors = {
+            "Si": ("#166534", "#dcfce7"),
+            "No": ("#991b1b", "#fee2e2"),
+            "-": ("#3f3f46", "#e4e4e7"),
+        }
+        fg_color, text_color = colors.get(status, colors["-"])
+        label = ctk.CTkLabel(
+            self.grid_frame,
+            text=status,
+            width=width,
+            height=24,
+            fg_color=fg_color,
+            text_color=text_color,
+            corner_radius=8,
+            font=ctk.CTkFont(weight="bold"),
+        )
+        label.grid(row=row, column=column, sticky="w", padx=3, pady=4)
 
     def _render_ticket_button(self, row: int, column: int, width: int, ticket: dict[str, object]) -> None:
         ticket_cell = ctk.CTkFrame(self.grid_frame, fg_color="transparent", width=width, height=28)
@@ -592,6 +656,11 @@ class TicketApp(ctk.CTk):
         self.sort_config = {"key": key, "direction": direction}
         self._apply_sort()
         self._render_ticket_grid()
+
+    def _sort_button_text(self, key: str) -> str:
+        if not self.sort_config or self.sort_config["key"] != key:
+            return "↕"
+        return "↑" if self.sort_config["direction"] == "asc" else "↓"
 
     def _apply_sort(self) -> None:
         if not self.sort_config:
