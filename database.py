@@ -82,6 +82,16 @@ def initialize_database() -> None:
                 UNIQUE(ticket_id, fecha)
             );
 
+            CREATE TABLE IF NOT EXISTS ticket_daily_status_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                fecha DATE NOT NULL,
+                estado TEXT NOT NULL,
+                changed_at DATETIME NOT NULL,
+                FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+                UNIQUE(ticket_id, fecha)
+            );
+
             CREATE TABLE IF NOT EXISTS action_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 action_type TEXT NOT NULL,

@@ -991,7 +991,7 @@ class TicketApp(ctk.CTk):
 
     def _update_ticket_estado(self, ticket_id: int, estado: str) -> None:
         try:
-            services.update_ticket_estado(ticket_id, estado)
+            services.update_ticket_estado(ticket_id, estado, status_change_date=self._selected_date())
         except ValueError as exc:
             messagebox.showerror("Estado invalido", str(exc), parent=self)
             self._load_tickets()
@@ -1712,7 +1712,7 @@ class EditTicketModal(ctk.CTkToplevel):
             "estado_actual": self.estado_actual_combo.get(),
         }
         try:
-            services.update_ticket(self.ticket_id, data)
+            services.update_ticket(self.ticket_id, data, status_change_date=self.parent._selected_date())
         except ValueError as exc:
             messagebox.showerror("Datos invalidos", str(exc), parent=self)
             return

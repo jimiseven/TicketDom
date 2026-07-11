@@ -87,10 +87,26 @@ def _fetch_ticket_updates(conn, ticket_id: int) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
+def _fetch_ticket_status_changes(conn, ticket_id: int) -> list[dict[str, object]]:
+    rows = conn.execute(
+        "SELECT * FROM ticket_daily_status_changes WHERE ticket_id = ? ORDER BY id ASC",
+        (ticket_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _fetch_daily_update(conn, ticket_id: int, update_date: date) -> dict[str, object] | None:
     row = conn.execute(
         "SELECT * FROM ticket_daily_updates WHERE ticket_id = ? AND fecha = ?",
         (ticket_id, update_date.isoformat()),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _fetch_daily_status_change(conn, ticket_id: int, change_date: date) -> dict[str, object] | None:
+    row = conn.execute(
+        "SELECT * FROM ticket_daily_status_changes WHERE ticket_id = ? AND fecha = ?",
+        (ticket_id, change_date.isoformat()),
     ).fetchone()
     return dict(row) if row else None
 
@@ -158,6 +174,29 @@ def _restore_daily_update(conn, before_update: dict[str, object] | None, ticket_
         )
 
 
+def _restore_daily_status_change(
+    conn,
+    before_change: dict[str, object] | None,
+    ticket_id: int,
+    change_date: str,
+) -> None:
+    conn.execute("DELETE FROM ticket_daily_status_changes WHERE ticket_id = ? AND fecha = ?", (ticket_id, change_date))
+    if before_change:
+        conn.execute(
+            """
+            INSERT INTO ticket_daily_status_changes (id, ticket_id, fecha, estado, changed_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                before_change["id"],
+                before_change["ticket_id"],
+                before_change["fecha"],
+                before_change["estado"],
+                before_change["changed_at"],
+            ),
+        )
+
+
 def _restore_daily_report_override(conn, before_override: dict[str, object] | None, report_date: str, ticket_id: int) -> None:
     conn.execute("DELETE FROM daily_report_ticket_overrides WHERE fecha = ? AND ticket_id = ?", (report_date, ticket_id))
     if before_override:
@@ -196,6 +235,22 @@ def _mark_ticket_updated_with_conn(conn, ticket_id: int, update_date: date) -> N
         ON CONFLICT(ticket_id, fecha) DO UPDATE SET updated_at = excluded.updated_at
         """,
         (ticket_id, update_date.isoformat(), _now()),
+    )
+
+
+def _record_ticket_status_change(conn, ticket_id: int, estado: str, change_date: date | None) -> None:
+    if change_date is None:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO ticket_daily_status_changes (ticket_id, fecha, estado, changed_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(ticket_id, fecha) DO UPDATE SET
+            estado = excluded.estado,
+            changed_at = excluded.changed_at
+        """,
+        (ticket_id, change_date.isoformat(), estado, _now()),
     )
 
 
@@ -298,7 +353,12 @@ def get_ticket(ticket_id: int) -> dict[str, object] | None:
     return dict(row) if row else None
 
 
-def update_ticket(ticket_id: int, ticket_data: dict[str, str], update_date: date | None = None) -> None:
+def update_ticket(
+    ticket_id: int,
+    ticket_data: dict[str, str],
+    update_date: date | None = None,
+    status_change_date: date | None = None,
+) -> None:
     required_fields = ("fecha_creacion", "pais", "estado", "estado_actual")
     missing = [field for field in required_fields if not ticket_data.get(field, "").strip()]
     if missing:
@@ -316,18 +376,37 @@ def update_ticket(ticket_id: int, ticket_data: dict[str, str], update_date: date
         "estado_actual": ticket_data["estado_actual"].strip(),
     }
     with get_connection() as conn:
-        before = {"ticket": _fetch_ticket(conn, ticket_id), "daily_update": None, "update_date": None}
+        before = {
+            "ticket": _fetch_ticket(conn, ticket_id),
+            "daily_update": None,
+            "update_date": None,
+            "status_change": None,
+            "status_change_date": None,
+        }
         if before["ticket"] is None:
             return
         if update_date:
             before["daily_update"] = _fetch_daily_update(conn, ticket_id, update_date)
             before["update_date"] = update_date.isoformat()
+        if status_change_date:
+            before["status_change"] = _fetch_daily_status_change(conn, ticket_id, status_change_date)
+            before["status_change_date"] = status_change_date.isoformat()
         _update_ticket_row(conn, ticket_id, cleaned_data)
+        if before["ticket"] and str(before["ticket"]["estado"]) != cleaned_data["estado"]:
+            _record_ticket_status_change(conn, ticket_id, cleaned_data["estado"], status_change_date)
         if update_date:
             _mark_ticket_updated_with_conn(conn, ticket_id, update_date)
-        after = {"ticket": _fetch_ticket(conn, ticket_id), "daily_update": None, "update_date": before["update_date"]}
+        after = {
+            "ticket": _fetch_ticket(conn, ticket_id),
+            "daily_update": None,
+            "update_date": before["update_date"],
+            "status_change": None,
+            "status_change_date": before["status_change_date"],
+        }
         if update_date:
             after["daily_update"] = _fetch_daily_update(conn, ticket_id, update_date)
+        if status_change_date:
+            after["status_change"] = _fetch_daily_status_change(conn, ticket_id, status_change_date)
         _record_action(conn, "update_ticket", ticket_id, before, after)
 
 
@@ -339,23 +418,31 @@ def get_visible_tickets(selected_date: date) -> list[dict[str, object]]:
         if selected_iso == today_iso:
             rows = conn.execute(
                 """
-                SELECT *, fecha_creacion < ? AS is_rollover
+                SELECT tickets.*, fecha_creacion < ? AS is_rollover
                 FROM tickets
+                LEFT JOIN ticket_daily_status_changes
+                  ON ticket_daily_status_changes.ticket_id = tickets.id
+                 AND ticket_daily_status_changes.fecha = ?
                 WHERE fecha_creacion = ?
-                   OR (fecha_creacion < ? AND estado IN ('respondido', 'pendiente', 'critico'))
-                ORDER BY is_rollover ASC, fecha_creacion DESC, id DESC
+                   OR (fecha_creacion < ? AND tickets.estado IN ('respondido', 'pendiente', 'critico'))
+                   OR ticket_daily_status_changes.estado IN ('cerrado', 'no tomado')
+                ORDER BY is_rollover ASC, fecha_creacion DESC, tickets.id DESC
                 """,
-                (today_iso, today_iso, today_iso),
+                (today_iso, selected_iso, today_iso, today_iso),
             ).fetchall()
         else:
             rows = conn.execute(
                 """
-                SELECT *, 0 AS is_rollover
+                SELECT tickets.*, 0 AS is_rollover
                 FROM tickets
+                LEFT JOIN ticket_daily_status_changes
+                  ON ticket_daily_status_changes.ticket_id = tickets.id
+                 AND ticket_daily_status_changes.fecha = ?
                 WHERE fecha_creacion = ?
-                ORDER BY id DESC
+                   OR ticket_daily_status_changes.estado IN ('cerrado', 'no tomado')
+                ORDER BY tickets.id DESC
                 """,
-                (selected_iso,),
+                (selected_iso, selected_iso),
             ).fetchall()
 
     return [dict(row) for row in rows]
@@ -367,6 +454,7 @@ def delete_ticket(ticket_id: int) -> None:
             "ticket": _fetch_ticket(conn, ticket_id),
             "comments": _fetch_ticket_comments(conn, ticket_id),
             "daily_updates": _fetch_ticket_updates(conn, ticket_id),
+            "status_changes": _fetch_ticket_status_changes(conn, ticket_id),
         }
         if before["ticket"] is None:
             return
@@ -385,6 +473,7 @@ def delete_tickets(ticket_ids: list[int]) -> None:
                 "ticket": _fetch_ticket(conn, ticket_id),
                 "comments": _fetch_ticket_comments(conn, ticket_id),
                 "daily_updates": _fetch_ticket_updates(conn, ticket_id),
+                "status_changes": _fetch_ticket_status_changes(conn, ticket_id),
             }
             for ticket_id in ticket_ids
             if _fetch_ticket(conn, ticket_id) is not None
@@ -516,7 +605,9 @@ def _fetch_daily_report_override(conn, report_date: date, ticket_id: int) -> dic
     return dict(row) if row else None
 
 
-def _daily_report_origin(created_today: bool, updated_today: bool, included: bool, automatic: bool) -> str:
+def _daily_report_origin(created_today: bool, updated_today: bool, closed_today: bool, included: bool, automatic: bool) -> str:
+    if closed_today:
+        return "Cerrado hoy"
     if created_today and updated_today:
         return "Creado y actualizado"
     if created_today:
@@ -536,17 +627,21 @@ def get_daily_report_ticket_details(report_date: date) -> list[dict[str, object]
             SELECT
                 tickets.*,
                 ticket_daily_updates.ticket_id IS NOT NULL AS updated_today,
+                ticket_daily_status_changes.estado AS status_changed_today,
                 daily_report_ticket_overrides.included AS override_included
             FROM tickets
             LEFT JOIN ticket_daily_updates
               ON ticket_daily_updates.ticket_id = tickets.id
              AND ticket_daily_updates.fecha = ?
+            LEFT JOIN ticket_daily_status_changes
+              ON ticket_daily_status_changes.ticket_id = tickets.id
+             AND ticket_daily_status_changes.fecha = ?
             LEFT JOIN daily_report_ticket_overrides
               ON daily_report_ticket_overrides.ticket_id = tickets.id
              AND daily_report_ticket_overrides.fecha = ?
             ORDER BY tickets.fecha_creacion DESC, tickets.id DESC
             """,
-            (report_iso, report_iso),
+            (report_iso, report_iso, report_iso),
         ).fetchall()
 
     details: list[dict[str, object]] = []
@@ -554,7 +649,8 @@ def get_daily_report_ticket_details(report_date: date) -> list[dict[str, object]
         ticket = dict(row)
         created_today = str(ticket["fecha_creacion"]) == report_iso
         updated_today = bool(ticket["updated_today"])
-        automatic = created_today or updated_today
+        closed_today = str(ticket.get("status_changed_today") or "").lower() in {"cerrado", "no tomado"}
+        automatic = created_today or updated_today or closed_today
         override = ticket["override_included"]
         included = automatic if override is None else bool(override)
         details.append(
@@ -562,7 +658,7 @@ def get_daily_report_ticket_details(report_date: date) -> list[dict[str, object]
                 **ticket,
                 "automatic": automatic,
                 "included": included,
-                "origin": _daily_report_origin(created_today, updated_today, included, automatic),
+                "origin": _daily_report_origin(created_today, updated_today, closed_today, included, automatic),
             }
         )
 
@@ -647,24 +743,48 @@ def build_daily_report_message(report_date: date, data: dict[str, int]) -> str:
     )
 
 
-def update_ticket_estado(ticket_id: int, estado: str, update_date: date | None = None) -> None:
+def update_ticket_estado(
+    ticket_id: int,
+    estado: str,
+    update_date: date | None = None,
+    status_change_date: date | None = None,
+) -> None:
     estado = estado.strip()
     if estado not in DEFAULT_ESTADOS:
         raise ValueError("Estado invalido.")
 
     with get_connection() as conn:
-        before = {"ticket": _fetch_ticket(conn, ticket_id), "daily_update": None, "update_date": None}
+        before = {
+            "ticket": _fetch_ticket(conn, ticket_id),
+            "daily_update": None,
+            "update_date": None,
+            "status_change": None,
+            "status_change_date": None,
+        }
         if before["ticket"] is None:
             return
         if update_date:
             before["daily_update"] = _fetch_daily_update(conn, ticket_id, update_date)
             before["update_date"] = update_date.isoformat()
+        if status_change_date:
+            before["status_change"] = _fetch_daily_status_change(conn, ticket_id, status_change_date)
+            before["status_change_date"] = status_change_date.isoformat()
         conn.execute("UPDATE tickets SET estado = ? WHERE id = ?", (estado, ticket_id))
+        if before["ticket"] and str(before["ticket"]["estado"]) != estado:
+            _record_ticket_status_change(conn, ticket_id, estado, status_change_date)
         if update_date:
             _mark_ticket_updated_with_conn(conn, ticket_id, update_date)
-        after = {"ticket": _fetch_ticket(conn, ticket_id), "daily_update": None, "update_date": before["update_date"]}
+        after = {
+            "ticket": _fetch_ticket(conn, ticket_id),
+            "daily_update": None,
+            "update_date": before["update_date"],
+            "status_change": None,
+            "status_change_date": before["status_change_date"],
+        }
         if update_date:
             after["daily_update"] = _fetch_daily_update(conn, ticket_id, update_date)
+        if status_change_date:
+            after["status_change"] = _fetch_daily_status_change(conn, ticket_id, status_change_date)
         _record_action(conn, "update_estado", ticket_id, before, after)
 
 
@@ -752,6 +872,20 @@ def _restore_deleted_ticket_payload(conn, payload: dict[str, object]) -> None:
             """,
             (update["id"], update["ticket_id"], update["fecha"], update["updated_at"]),
         )
+    for status_change in payload.get("status_changes", []):
+        conn.execute(
+            """
+            INSERT INTO ticket_daily_status_changes (id, ticket_id, fecha, estado, changed_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                status_change["id"],
+                status_change["ticket_id"],
+                status_change["fecha"],
+                status_change["estado"],
+                status_change["changed_at"],
+            ),
+        )
 
 
 def _restore_ticket_action(conn, before: dict[str, object]) -> None:
@@ -765,6 +899,10 @@ def _restore_ticket_action(conn, before: dict[str, object]) -> None:
     update_date = before.get("update_date")
     if ticket and update_date:
         _restore_daily_update(conn, before.get("daily_update"), int(ticket["id"]), str(update_date))
+
+    status_change_date = before.get("status_change_date")
+    if ticket and status_change_date:
+        _restore_daily_status_change(conn, before.get("status_change"), int(ticket["id"]), str(status_change_date))
 
 
 def revert_last_action() -> str | None:
