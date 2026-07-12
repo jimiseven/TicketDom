@@ -933,6 +933,49 @@ def _restore_ticket_action(conn, before: dict[str, object]) -> None:
         _restore_daily_status_change(conn, before.get("status_change"), int(ticket["id"]), str(status_change_date))
 
 
+def _revert_action_by_row(conn, action: dict[str, object]) -> str:
+    """Revert a single action (dict from action_history row) and return description."""
+    action_type = str(action["action_type"])
+    ticket_id = action["ticket_id"]
+    before = json.loads(action["before_data"]) if action["before_data"] else None
+    after = json.loads(action["after_data"]) if action["after_data"] else None
+
+    if action_type == "create_ticket" and after:
+        conn.execute("DELETE FROM tickets WHERE id = ?", (after["id"],))
+        description = "Creacion de ticket revertida."
+    elif action_type == "delete_ticket" and before:
+        _restore_deleted_ticket_payload(conn, before)
+        description = "Eliminacion de ticket revertida."
+    elif action_type == "delete_tickets" and isinstance(before, list):
+        for payload in before:
+            _restore_deleted_ticket_payload(conn, payload)
+        description = "Eliminacion multiple revertida."
+    elif action_type in {"update_ticket", "update_estado", "update_estado_actual"} and before:
+        _restore_ticket_action(conn, before)
+        description = "Cambio de ticket revertido."
+    elif action_type == "add_comment" and after:
+        comment = after.get("comment")
+        if isinstance(comment, dict):
+            conn.execute("DELETE FROM comentarios WHERE id = ?", (comment["id"],))
+        if ticket_id and before and before.get("update_date"):
+            _restore_daily_update(conn, before.get("daily_update"), int(ticket_id), str(before["update_date"]))
+        description = "Comentario revertido."
+    elif action_type in {"mark_updated", "unmark_updated"} and ticket_id and before:
+        _restore_daily_update(conn, before.get("daily_update"), int(ticket_id), str(before["update_date"]))
+        description = "Marca de actualizado revertida."
+    elif action_type == "daily_report_ticket_override" and ticket_id and before:
+        _restore_daily_report_override(conn, before.get("override"), str(before["report_date"]), int(ticket_id))
+        description = "Seleccion de ticket del reporte revertida."
+    elif action_type == "daily_report_reset_overrides" and before:
+        _restore_daily_report_overrides(conn, before.get("overrides", []), str(before["report_date"]))
+        description = "Seleccion del reporte restaurada."
+    else:
+        raise ValueError("No se pudo revertir esta accion.")
+
+    conn.execute("UPDATE action_history SET undone = 1 WHERE id = ?", (action["id"],))
+    return description
+
+
 def revert_last_action() -> str | None:
     with get_connection() as conn:
         row = conn.execute(
@@ -946,47 +989,18 @@ def revert_last_action() -> str | None:
         ).fetchone()
         if not row:
             return None
+        return _revert_action_by_row(conn, dict(row))
 
-        action = dict(row)
-        action_type = str(action["action_type"])
-        ticket_id = action["ticket_id"]
-        before = json.loads(action["before_data"]) if action["before_data"] else None
-        after = json.loads(action["after_data"]) if action["after_data"] else None
 
-        if action_type == "create_ticket" and after:
-            conn.execute("DELETE FROM tickets WHERE id = ?", (after["id"],))
-            description = "Creacion de ticket revertida."
-        elif action_type == "delete_ticket" and before:
-            _restore_deleted_ticket_payload(conn, before)
-            description = "Eliminacion de ticket revertida."
-        elif action_type == "delete_tickets" and isinstance(before, list):
-            for payload in before:
-                _restore_deleted_ticket_payload(conn, payload)
-            description = "Eliminacion multiple revertida."
-        elif action_type in {"update_ticket", "update_estado", "update_estado_actual"} and before:
-            _restore_ticket_action(conn, before)
-            description = "Cambio de ticket revertido."
-        elif action_type == "add_comment" and after:
-            comment = after.get("comment")
-            if isinstance(comment, dict):
-                conn.execute("DELETE FROM comentarios WHERE id = ?", (comment["id"],))
-            if ticket_id and before and before.get("update_date"):
-                _restore_daily_update(conn, before.get("daily_update"), int(ticket_id), str(before["update_date"]))
-            description = "Comentario revertido."
-        elif action_type in {"mark_updated", "unmark_updated"} and ticket_id and before:
-            _restore_daily_update(conn, before.get("daily_update"), int(ticket_id), str(before["update_date"]))
-            description = "Marca de actualizado revertida."
-        elif action_type == "daily_report_ticket_override" and ticket_id and before:
-            _restore_daily_report_override(conn, before.get("override"), str(before["report_date"]), int(ticket_id))
-            description = "Seleccion de ticket del reporte revertida."
-        elif action_type == "daily_report_reset_overrides" and before:
-            _restore_daily_report_overrides(conn, before.get("overrides", []), str(before["report_date"]))
-            description = "Seleccion del reporte restaurada."
-        else:
-            raise ValueError("No se pudo revertir la ultima accion.")
-
-        conn.execute("UPDATE action_history SET undone = 1 WHERE id = ?", (action["id"],))
-        return description
+def revert_action(action_id: int) -> str:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM action_history WHERE id = ? AND undone = 0",
+            (action_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Accion no encontrada o ya fue revertida.")
+        return _revert_action_by_row(conn, dict(row))
 
 
 ACTION_LABELS = {
@@ -1046,6 +1060,7 @@ def get_action_history(limit: int = 80) -> list[dict[str, object]]:
         ticket_number = action.get("current_ticket") or _extract_ticket_number_from_payload(after) or _extract_ticket_number_from_payload(before) or "-"
         history.append(
             {
+                "id": action["id"],
                 "created_at": action["created_at"],
                 "action": ACTION_LABELS.get(str(action["action_type"]), str(action["action_type"])),
                 "ticket": ticket_number,

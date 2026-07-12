@@ -118,58 +118,56 @@ class TicketApp(ctk.CTk):
                 text=title.upper(),
                 text_color="#a1a1aa",
                 font=ctk.CTkFont(size=11, weight="bold"),
-            ).grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(7, 1))
+            ).grid(row=0, column=0, columnspan=10, sticky="w", padx=10, pady=(7, 1))
             return group
 
-        date_group = make_group(0, 0, "Fecha")
-        self.date_entry = DateEntry(date_group, date_pattern="yyyy-mm-dd", width=12)
+        ops_group = make_group(0, 0, "Operaciones")
+        self.date_entry = DateEntry(ops_group, date_pattern="yyyy-mm-dd", width=12)
         self.date_entry.set_date(date.today())
-        self.date_entry.grid(row=1, column=0, padx=(10, 4), pady=(2, 10))
-        self.date_entry.bind("<<DateEntrySelected>>", lambda _event: self._load_tickets())
-        ctk.CTkButton(date_group, text="<", width=34, command=lambda: self._change_selected_day(-1)).grid(
-            row=1, column=1, padx=2, pady=(2, 10)
+        self.date_entry.grid(row=1, column=0, padx=(10, 2), pady=(2, 10))
+        self.date_entry.bind("<<DateEntrySelected>>", lambda _e: self._load_tickets())
+        ctk.CTkButton(ops_group, text="<", width=30, command=lambda: self._change_selected_day(-1)).grid(
+            row=1, column=1, padx=1, pady=(2, 10)
         )
-        ctk.CTkButton(date_group, text=">", width=34, command=lambda: self._change_selected_day(1)).grid(
-            row=1, column=2, padx=2, pady=(2, 10)
+        ctk.CTkButton(ops_group, text=">", width=30, command=lambda: self._change_selected_day(1)).grid(
+            row=1, column=2, padx=1, pady=(2, 10)
         )
-        ctk.CTkButton(date_group, text="Cargar", width=68, command=self._load_tickets).grid(
-            row=1, column=3, padx=(2, 10), pady=(2, 10)
+        ctk.CTkButton(ops_group, text="Ir", width=34, command=self._load_tickets).grid(
+            row=1, column=3, padx=(1, 6), pady=(2, 10)
         )
-
-        ticket_group = make_group(0, 1, "Tickets")
         ctk.CTkButton(
-            ticket_group,
+            ops_group,
             text="Nuevo",
             command=self._open_create_modal,
             fg_color="#16a34a",
             hover_color="#15803d",
-            width=78,
-        ).grid(row=1, column=0, padx=(10, 4), pady=(2, 10))
+            width=72,
+        ).grid(row=1, column=4, padx=2, pady=(2, 10))
         ctk.CTkButton(
-            ticket_group,
+            ops_group,
             text="Lista",
             command=self._open_bulk_modal,
             fg_color="#0891b2",
             hover_color="#0e7490",
-            width=70,
-        ).grid(row=1, column=1, padx=4, pady=(2, 10))
+            width=62,
+        ).grid(row=1, column=5, padx=2, pady=(2, 10))
         ctk.CTkButton(
-            ticket_group,
-            text="Actualizar",
+            ops_group,
+            text="Refrescar",
             command=self._load_tickets,
             fg_color="#2563eb",
             hover_color="#1d4ed8",
-            width=88,
-        ).grid(row=1, column=2, padx=(4, 10), pady=(2, 10))
+            width=78,
+        ).grid(row=1, column=6, padx=2, pady=(2, 10))
 
-        search_group = make_group(0, 2, "Busqueda", weight=1)
+        search_group = make_group(0, 1, "Busqueda", weight=1)
         search_entry = ctk.CTkEntry(
             search_group,
             textvariable=self.search_var,
             placeholder_text="Buscar ticket, correo o telefono",
         )
         search_entry.grid(row=1, column=0, sticky="ew", padx=(10, 5), pady=(2, 10))
-        search_entry.bind("<Return>", lambda _event: self._load_tickets())
+        search_entry.bind("<Return>", lambda _e: self._load_tickets())
         ctk.CTkButton(search_group, text="Buscar", command=self._load_tickets, width=72).grid(
             row=1, column=1, padx=4, pady=(2, 10)
         )
@@ -182,7 +180,7 @@ class TicketApp(ctk.CTk):
             hover_color="#3f3f46",
         ).grid(row=1, column=2, padx=(4, 10), pady=(2, 10))
 
-        report_group = make_group(0, 3, "Reportes")
+        report_group = make_group(0, 2, "Reportes")
         ctk.CTkButton(
             report_group,
             text="SMS",
@@ -200,47 +198,45 @@ class TicketApp(ctk.CTk):
             width=72,
         ).grid(row=1, column=1, padx=(4, 10), pady=(2, 10))
 
-        data_group = make_group(1, 0, "Datos")
-        ctk.CTkButton(data_group, text="Exportar", command=self._export_database, width=82).grid(
+        admin_group = make_group(1, 0, "Admin", weight=1)
+        ctk.CTkButton(admin_group, text="Exportar", command=self._export_database, width=82).grid(
             row=1, column=0, padx=(10, 4), pady=(2, 10)
         )
-        ctk.CTkButton(data_group, text="Importar", command=self._import_database, width=82).grid(
-            row=1, column=1, padx=(4, 10), pady=(2, 10)
+        ctk.CTkButton(admin_group, text="Importar", command=self._import_database, width=82).grid(
+            row=1, column=1, padx=4, pady=(2, 10)
         )
-
-        actions_group = make_group(1, 1, "Acciones")
         ctk.CTkButton(
-            actions_group,
+            admin_group,
             text="Revertir",
             command=self._revert_last_action,
             fg_color="#9333ea",
             hover_color="#7e22ce",
             width=78,
-        ).grid(row=1, column=0, padx=(10, 4), pady=(2, 10))
+        ).grid(row=1, column=2, padx=4, pady=(2, 10))
         ctk.CTkButton(
-            actions_group,
+            admin_group,
             text="Historial",
             command=self._open_history_modal,
             fg_color="#475569",
             hover_color="#334155",
             width=78,
-        ).grid(row=1, column=1, padx=4, pady=(2, 10))
+        ).grid(row=1, column=3, padx=4, pady=(2, 10))
         ctk.CTkButton(
-            actions_group,
+            admin_group,
             text="Eliminar",
             command=self._delete_selected_tickets,
             fg_color="#dc2626",
             hover_color="#991b1b",
             width=78,
-        ).grid(row=1, column=2, padx=4, pady=(2, 10))
+        ).grid(row=1, column=4, padx=4, pady=(2, 10))
         ctk.CTkButton(
-            actions_group,
+            admin_group,
             text="Defecto",
             command=self._reset_table_columns,
             fg_color="#52525b",
             hover_color="#3f3f46",
             width=74,
-        ).grid(row=1, column=3, padx=(4, 10), pady=(2, 10))
+        ).grid(row=1, column=5, padx=(4, 10), pady=(2, 10))
 
 
         self.table_container = ctk.CTkFrame(self)
@@ -1144,8 +1140,8 @@ class ActionHistoryModal(ctk.CTkToplevel):
             widget.destroy()
 
         history = services.get_action_history()
-        headers = ["Fecha/Hora", "Accion", "Ticket", "Estado"]
-        widths = [155, 230, 210, 120]
+        headers = ["Fecha/Hora", "Accion", "Ticket", "Estado", ""]
+        widths = [155, 220, 190, 90, 90]
         for column, title in enumerate(headers):
             ctk.CTkLabel(
                 self.list_frame,
@@ -1161,9 +1157,11 @@ class ActionHistoryModal(ctk.CTkToplevel):
             )
             return
 
-        for row, action in enumerate(history, start=1):
-            status = "Revertida" if action["undone"] else "Activa"
-            text_color = "#a1a1aa" if action["undone"] else None
+        for r, action in enumerate(history, start=1):
+            action_id = int(action["id"])
+            is_undone = action["undone"]
+            status = "Revertida" if is_undone else "Activa"
+            text_color = "#a1a1aa" if is_undone else None
             values = [action["created_at"], action["action"], action["ticket"]]
             for column, value in enumerate(values):
                 ctk.CTkLabel(
@@ -1172,16 +1170,44 @@ class ActionHistoryModal(ctk.CTkToplevel):
                     width=widths[column],
                     anchor="w",
                     text_color=text_color,
-                ).grid(row=row, column=column, sticky="w", padx=4, pady=4)
+                ).grid(row=r, column=column, sticky="w", padx=4, pady=4)
             ctk.CTkLabel(
                 self.list_frame,
                 text=status,
                 width=widths[3],
-                fg_color="#3f3f46" if action["undone"] else "#166534",
-                text_color="#e4e4e7" if action["undone"] else "#dcfce7",
+                fg_color="#3f3f46" if is_undone else "#166534",
+                text_color="#e4e4e7" if is_undone else "#dcfce7",
                 corner_radius=8,
                 font=ctk.CTkFont(weight="bold"),
-            ).grid(row=row, column=3, sticky="w", padx=4, pady=4)
+            ).grid(row=r, column=3, sticky="w", padx=4, pady=4)
+            if not is_undone:
+                ctk.CTkButton(
+                    self.list_frame,
+                    text="Revertir",
+                    width=widths[4],
+                    height=26,
+                    fg_color="#9333ea",
+                    hover_color="#7e22ce",
+                    command=lambda aid=action_id: self._do_revert(aid),
+                ).grid(row=r, column=4, sticky="w", padx=4, pady=2)
+
+    def _do_revert(self, action_id: int) -> None:
+        confirmed = messagebox.askyesno(
+            "Revertir accion",
+            "Se revertira esta accion. Continuar?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        try:
+            message = services.revert_action(action_id)
+        except ValueError as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+            return
+        if message:
+            self.parent._load_tickets()
+            self._render_history()
+            self.parent._show_toast(message)
 
 
 class DailyReportModal(ctk.CTkToplevel):
