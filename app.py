@@ -661,11 +661,7 @@ class TicketApp(ctk.CTk):
         col_key = self._tree_columns()[col_idx] if 0 <= col_idx < len(self._tree_columns()) else ""
 
         if col_key == "ticket":
-            ticket_data = services.get_ticket(ticket_id)
-            if ticket_data and ticket_data.get("numero_ticket"):
-                self.clipboard_clear()
-                self.clipboard_append(str(ticket_data["numero_ticket"]))
-                self._show_toast("Ticket copiado al portapapeles.")
+            self._open_edit_modal(ticket_id)
             return
 
         if col_key == "updated":
