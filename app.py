@@ -353,17 +353,17 @@ class TicketApp(ctk.CTk):
     def _show_toast(self, message: str) -> None:
         toast = ctk.CTkToplevel(self)
         toast.title("")
-        toast.geometry("340x90")
+        toast.geometry("280x60")
         toast.resizable(False, False)
         toast.transient(self)
         toast.attributes("-topmost", True)
         ctk.CTkLabel(
             toast,
             text=message,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            wraplength=300,
-        ).pack(expand=True, fill="both", padx=18, pady=18)
-        toast.after(1600, toast.destroy)
+            font=ctk.CTkFont(size=12, weight="bold"),
+            wraplength=260,
+        ).pack(expand=True, fill="both", padx=12, pady=12)
+        toast.after(300, toast.destroy)
 
     def _reset_table_columns(self) -> None:
         self.table_columns = self._default_table_columns()
@@ -661,7 +661,14 @@ class TicketApp(ctk.CTk):
         col_key = self._tree_columns()[col_idx] if 0 <= col_idx < len(self._tree_columns()) else ""
 
         if col_key == "ticket":
-            self._open_edit_modal(ticket_id)
+            tree_vals = self.tree.item(item, "values")
+            if tree_vals:
+                idx = self._tree_columns().index("ticket")
+                ticket_val = str(tree_vals[idx]).split(" ")[0]
+                if ticket_val:
+                    self.clipboard_clear()
+                    self.clipboard_append(ticket_val)
+                    self._show_toast("Ticket copiado: " + ticket_val)
             return
 
         if col_key == "updated":
@@ -724,6 +731,7 @@ class TicketApp(ctk.CTk):
         menu = tk.Menu(self, tearoff=0, bg="#27272a", fg="#f4f4f5",
                        activebackground="#3f3f46", activeforeground="#f4f4f5")
         menu.add_command(label="Editar ticket", command=lambda: self._open_edit_modal(ticket_id))
+        menu.add_command(label="Copiar ticket", command=lambda: self._copy_ticket_from_tree(ticket_id))
         menu.add_command(label="Ver comentarios", command=lambda: self._open_comments_modal(ticket_id))
         menu.add_separator()
         menu.add_command(label="Marcar actualizado", command=lambda: self._mark_item_updated(ticket_id))
@@ -742,6 +750,13 @@ class TicketApp(ctk.CTk):
         services.mark_ticket_updated(ticket_id, self._selected_date())
         self._load_tickets()
         self._show_toast("Ticket marcado como actualizado.")
+
+    def _copy_ticket_from_tree(self, ticket_id: int) -> None:
+        ticket = services.get_ticket(ticket_id)
+        if ticket and ticket.get("numero_ticket"):
+            self.clipboard_clear()
+            self.clipboard_append(str(ticket["numero_ticket"]))
+            self._show_toast("Ticket copiado: " + str(ticket["numero_ticket"]))
 
     def _cycle_tree_estado(self, ticket_id: int) -> None:
         estados = list(services.get_estados())
