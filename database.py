@@ -122,6 +122,32 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     if "phone" not in columns:
         conn.execute("ALTER TABLE tickets ADD COLUMN phone TEXT")
 
+    dr_columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_reports)").fetchall()}
+    for col in ["missed_calls", "goto_chat", "new_tickets_count", "open_tickets_count"]:
+        if col not in dr_columns:
+            conn.execute(f"ALTER TABLE daily_reports ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS inbound_call_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha DATE NOT NULL,
+            phone TEXT NOT NULL,
+            numero_ticket TEXT NOT NULL,
+            created_at DATETIME NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_report_hq_tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha DATE NOT NULL,
+            ticket_id INTEGER NOT NULL,
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+            UNIQUE(fecha, ticket_id)
+        );
+        """
+    )
+
 
 def _insert_default_options(conn: sqlite3.Connection) -> None:
     for pais in DEFAULT_PAISES:

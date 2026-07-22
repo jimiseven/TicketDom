@@ -311,6 +311,47 @@ def ticket_exists(numero_ticket: str) -> bool:
     return row is not None
 
 
+def get_all_tickets_for_inbound(report_date: date | None = None) -> list[dict[str, object]]:
+    """Return tickets (with phone) for inbound call selection.
+    If report_date is given, only tickets visible on that date."""
+    with get_connection() as conn:
+        if report_date:
+            today_iso = date.today().isoformat()
+            report_iso = report_date.isoformat()
+            if report_iso == today_iso:
+                rows = conn.execute(
+                    """
+                    SELECT id, numero_ticket, problem_name, phone
+                    FROM tickets
+                    WHERE numero_ticket != ''
+                      AND (fecha_creacion = ?
+                           OR (fecha_creacion < ? AND estado NOT IN ('cerrado', 'no tomado')))
+                    ORDER BY fecha_creacion DESC, id DESC
+                    """,
+                    (today_iso, today_iso),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, numero_ticket, problem_name, phone
+                    FROM tickets
+                    WHERE numero_ticket != '' AND fecha_creacion = ?
+                    ORDER BY fecha_creacion DESC, id DESC
+                    """,
+                    (report_iso,),
+                ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, numero_ticket, problem_name, phone
+                FROM tickets
+                WHERE numero_ticket != ''
+                ORDER BY fecha_creacion DESC, id DESC
+                """,
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def create_ticket_list(
     rows: list[dict[str, str]],
     defaults: dict[str, str],
@@ -565,13 +606,15 @@ def get_updated_ticket_ids(ticket_ids: list[int], update_date: date) -> set[int]
 
 
 DAILY_REPORT_FIELDS = (
+    "new_tickets_count",
     "inbound_calls",
     "outbound_calls",
-    "calls_failed",
+    "missed_calls",
     "moor_chat",
-    "first_call_resolved",
+    "goto_chat",
     "emails",
     "tickets_hq_help",
+    "open_tickets_count",
 )
 
 
@@ -594,31 +637,131 @@ def save_daily_report(report_date: date, data: dict[str, int]) -> None:
         conn.execute(
             """
             INSERT INTO daily_reports (
-                fecha, inbound_calls, outbound_calls, calls_failed, moor_chat,
-                first_call_resolved, emails, tickets_hq_help, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fecha, inbound_calls, outbound_calls, missed_calls, moor_chat,
+                goto_chat, emails, tickets_hq_help, new_tickets_count, open_tickets_count, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(fecha) DO UPDATE SET
                 inbound_calls = excluded.inbound_calls,
                 outbound_calls = excluded.outbound_calls,
-                calls_failed = excluded.calls_failed,
+                missed_calls = excluded.missed_calls,
                 moor_chat = excluded.moor_chat,
-                first_call_resolved = excluded.first_call_resolved,
+                goto_chat = excluded.goto_chat,
                 emails = excluded.emails,
                 tickets_hq_help = excluded.tickets_hq_help,
+                new_tickets_count = excluded.new_tickets_count,
+                open_tickets_count = excluded.open_tickets_count,
                 updated_at = excluded.updated_at
             """,
             (
                 report_date.isoformat(),
                 values["inbound_calls"],
                 values["outbound_calls"],
-                values["calls_failed"],
+                values["missed_calls"],
                 values["moor_chat"],
-                values["first_call_resolved"],
+                values["goto_chat"],
                 values["emails"],
                 values["tickets_hq_help"],
+                values["new_tickets_count"],
+                values["open_tickets_count"],
                 now,
             ),
         )
+
+
+def add_inbound_call(report_date: date, phone: str, ticket_number: str) -> dict[str, object]:
+    """Add an inbound call record with phone and ticket number for a given date."""
+    phone = phone.strip()
+    ticket_number = ticket_number.strip()
+    if not phone or not ticket_number:
+        raise ValueError("Phone and ticket number are required.")
+
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO inbound_call_details (fecha, phone, numero_ticket, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (report_date.isoformat(), phone, ticket_number, _now()),
+        )
+        row = conn.execute(
+            "SELECT * FROM inbound_call_details WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    return dict(row)
+
+
+def get_inbound_call_details(report_date: date) -> list[dict[str, object]]:
+    """Get all inbound call records for a given date."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM inbound_call_details WHERE fecha = ? ORDER BY id ASC",
+            (report_date.isoformat(),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def remove_inbound_call(call_id: int) -> None:
+    """Remove an inbound call record by its id."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM inbound_call_details WHERE id = ?", (call_id,))
+
+
+def get_hq_ticket_ids(report_date: date) -> set[int]:
+    """Get set of ticket ids selected for HQ help on a given date."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT ticket_id FROM daily_report_hq_tickets WHERE fecha = ?",
+            (report_date.isoformat(),),
+        ).fetchall()
+    return {int(row["ticket_id"]) for row in rows}
+
+
+def set_hq_ticket(report_date: date, ticket_id: int, included: bool) -> None:
+    """Add or remove a ticket from the HQ help list for a given date."""
+    with get_connection() as conn:
+        if included:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO daily_report_hq_tickets (fecha, ticket_id, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (report_date.isoformat(), ticket_id, _now()),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM daily_report_hq_tickets WHERE fecha = ? AND ticket_id = ?",
+                (report_date.isoformat(), ticket_id),
+            )
+
+
+def auto_calc_new_tickets(report_date: date) -> list[dict[str, object]]:
+    """Get tickets created on the given date (regardless of status)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, numero_ticket, problem_name
+            FROM tickets
+            WHERE fecha_creacion = ?
+            ORDER BY id DESC
+            """,
+            (report_date.isoformat(),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def auto_calc_open_tickets(report_date: date) -> list[dict[str, object]]:
+    """Get tickets that are open at end of day (not cerrado/no tomado) for the given date."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, numero_ticket, problem_name
+            FROM tickets
+            WHERE fecha_creacion <= ?
+              AND estado NOT IN ('cerrado', 'no tomado')
+            ORDER BY fecha_creacion DESC, id DESC
+            """,
+            (report_date.isoformat(),),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def _fetch_daily_report_override(conn, report_date: date, ticket_id: int) -> dict[str, object] | None:
@@ -749,26 +892,62 @@ def reset_daily_report_ticket_overrides(report_date: date) -> None:
         )
 
 
-def build_daily_report_message(report_date: date, data: dict[str, int]) -> str:
-    formatted_date = f"{report_date.day} {MONTHS_ES[report_date.month]} {report_date.year}"
-    ticket_count = count_daily_report_tickets(report_date)
+def _format_ticket_list(tickets: list[dict[str, object]], max_items: int = 6) -> str:
+    """Format a list of tickets inline: count → ticket1, ticket2."""
+    if not tickets:
+        return "0"
+    parts = [str(t["numero_ticket"]) for t in tickets if t.get("numero_ticket")]
+    if len(parts) > max_items:
+        parts = parts[:max_items] + ["..."]
+    return f"{len(tickets)} — {', '.join(parts)}"
+
+
+def _format_inbound_list(details: list[dict[str, object]], max_items: int = 4) -> str:
+    """Format inbound calls inline: count → (phone + ticket), ..."""
+    if not details:
+        return "0"
+    parts = [f"({d['phone']} + {d['numero_ticket']})" for d in details]
+    if len(parts) > max_items:
+        parts = parts[:max_items] + ["..."]
+    return f"{len(details)} — {', '.join(parts)}"
+
+
+def _format_open_tickets(tickets: list[dict[str, object]], max_items: int = 4) -> str:
+    """Format open tickets inline: count — (ticket+issue), ..."""
+    if not tickets:
+        return "0"
+    parts = []
+    for t in tickets:
+        issue = (t.get("problem_name") or "")[:40]
+        parts.append(f"({t['numero_ticket']}+{issue})")
+    if len(parts) > max_items:
+        parts = parts[:max_items] + ["..."]
+    return f"{len(tickets)} — {', '.join(parts)}"
+
+
+def build_daily_report_message(
+    report_date: date,
+    data: dict[str, int],
+    inbound_details: list[dict[str, object]] | None = None,
+    hq_ticket_numbers: list[str] | None = None,
+    new_tickets: list[dict[str, object]] | None = None,
+    open_tickets: list[dict[str, object]] | None = None,
+) -> str:
+    formatted_date = f"{report_date.month:02d}/{report_date.day:02d}/{report_date.year % 100}"
     values = {field: int(data.get(field, 0)) for field in DAILY_REPORT_FIELDS}
-    return "\n".join(
-        [
-            f"Hi Neil, here is my report of today Report - {formatted_date}",
-            "",
-            f"Tickets: {ticket_count}",
-            "",
-            "Jimi:",
-            f"-Inbound calls: {values['inbound_calls']}",
-            f"-Outbound calls: {values['outbound_calls']}",
-            f"-calls Failed to connect: {values['calls_failed']}",
-            f"-7 moor platform online chat: {values['moor_chat']}",
-            f"-Issues resolved over the first call: {values['first_call_resolved']}",
-            f"-Emails: {values['emails']}",
-            f"-Tickets needing HQ help or attention: {values['tickets_hq_help']}",
-        ]
-    )
+
+    lines = [f"Daily Work Report: {formatted_date}"]
+    lines.append(f"● New Tickets: {_format_ticket_list(new_tickets) if new_tickets else values['new_tickets_count']}")
+    lines.append(f"● Inbound calls: {_format_inbound_list(inbound_details) if inbound_details else values['inbound_calls']}")
+    lines.append(f"● Outbound calls: {values['outbound_calls']}")
+    lines.append(f"● Missed calls: {values['missed_calls']}")
+    lines.append(f"● 7 moor platform online chats: {values['moor_chat']}")
+    lines.append(f"● GoTo platform online chats: {values['goto_chat']}")
+    lines.append(f"● Emails: {values['emails']}")
+    lines.append(f"● Tickets needing HQ help or attention: {', '.join(hq_ticket_numbers) if hq_ticket_numbers else values['tickets_hq_help']}")
+    lines.append(f"● Open tickets: {_format_open_tickets(open_tickets) if open_tickets else values['open_tickets_count']}")
+
+    return "\n".join(lines)
 
 
 def update_ticket_estado(

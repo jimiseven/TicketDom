@@ -11,3 +11,6 @@
 - Use forced Dark mode (not System adaptive) for this project. Confidence: 0.70
 - Use color-coded badges for ticket estado instead of combos (click to cycle states). Confidence: 0.70
 - Use text labels for top bar section headers (OPERACIONES, BUSQUEDA, etc.) instead of icons. Confidence: 0.70
+
+# Formatting
+- Format open tickets as: `(ticket + problema),(ticket + problema)` with parentheses and plus separator. Confidence: 0.70
