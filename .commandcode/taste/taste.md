@@ -1,6 +1,7 @@
 # Taste (Continuously Learned by [CommandCode][cmd])
 
 [cmd]: https://commandcode.ai/
+
 
 # Communication
 - Keep responses concise, compressed, and summarized. Avoid long explanations. Confidence: 0.90

@@ -368,6 +368,7 @@ class TicketApp(ctk.CTk):
     def _reset_table_columns(self) -> None:
         self.table_columns = self._default_table_columns()
         self.sort_config = None
+        self._tree_cols_set = False
         self._load_tickets()
 
     def _export_database(self) -> None:
@@ -600,8 +601,13 @@ class TicketApp(ctk.CTk):
         for col in cols:
             tree.heading(col, text=headers[col], anchor="w",
                          command=lambda c=col: self._toggle_sort(c))
-            tree.column(col, width=widths.get(col, 100), anchor="w", minwidth=30,
-                        stretch=col in stretch_cols)
+
+        # Only set column widths on first render (preserve user resize)
+        if not getattr(self, "_tree_cols_set", False):
+            for col in cols:
+                tree.column(col, width=widths.get(col, 100), anchor="w", minwidth=30,
+                            stretch=col in stretch_cols)
+            self._tree_cols_set = True
 
         if not self.visible_tickets:
             return

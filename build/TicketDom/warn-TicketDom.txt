@@ -43,7 +43,7 @@ missing module named readline - imported by site (delayed, optional), rlcomplete
 missing module named _manylinux - imported by packaging._manylinux (delayed, optional), setuptools._vendor.packaging._manylinux (delayed, optional)
 missing module named importlib_resources - imported by setuptools._vendor.jaraco.text (optional)
 missing module named trove_classifiers - imported by setuptools.config._validate_pyproject.formats (optional)
-missing module named pyimod02_importers - imported by C:\Users\CASE\AppData\Roaming\Python\Python314\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (delayed)
+missing module named pyimod02_importers - imported by C:\Users\CASE\Documents\TicketDom\.venv\Lib\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (delayed)
 missing module named ttk - imported by tkcalendar.dateentry (optional), tkcalendar.calendar_ (optional), tkcalendar.tooltip (optional), tkcalendar.__main__ (optional)
 missing module named Tkinter - imported by tkcalendar.dateentry (optional), tkcalendar.tooltip (optional), tkcalendar.__main__ (optional)
 missing module named tkFont - imported by tkcalendar.calendar_ (optional)
