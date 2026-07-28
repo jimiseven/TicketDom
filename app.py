@@ -1353,8 +1353,8 @@ class DailyReportModal(ctk.CTkToplevel):
         self.hq_label: ctk.CTkLabel | None = None
 
         self.title("Reporte Diario")
-        self.geometry("640x640")
-        self.minsize(560, 560)
+        self.geometry("720x660")
+        self.minsize(640, 580)
         self.transient(parent)
         self.grab_set()
         self.grid_columnconfigure(0, weight=1)
@@ -1379,41 +1379,49 @@ class DailyReportModal(ctk.CTkToplevel):
         body.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        # Helper to add a counter row
         row_counter = [0]
+        LBL = {"sticky": "w", "padx": (16, 8), "pady": 7}
+        BTN = {"padx": 3, "pady": 5}
+        SEP = {"padx": 14, "pady": 4}
 
         def _counter_row(field: str, label: str, initial: int = 0) -> None:
             row = row_counter[0]
             self.values[field] = initial
-            ctk.CTkLabel(body, text=label).grid(
-                row=row, column=0, sticky="w", padx=12, pady=6
+            ctk.CTkLabel(body, text=label, anchor="w", width=240).grid(
+                row=row, column=0, **LBL
             )
             ctk.CTkButton(
-                body,
-                text="-",
-                width=44,
-                fg_color="#52525b",
+                body, text="-", width=44, fg_color="#52525b",
                 command=lambda f=field: self._change_counter(f, -1),
-            ).grid(row=row, column=1, sticky="e", padx=(6, 4), pady=5)
+            ).grid(row=row, column=1, sticky="e", **BTN)
             value_label = ctk.CTkLabel(
-                body,
-                text=str(self.values[field]),
-                width=64,
-                fg_color="#27272a",
-                corner_radius=8,
+                body, text=str(self.values[field]),
+                width=64, fg_color="#27272a", corner_radius=8,
                 font=ctk.CTkFont(size=16, weight="bold"),
             )
-            value_label.grid(row=row, column=2, padx=4, pady=5)
+            value_label.grid(row=row, column=2, **BTN)
             self.value_labels[field] = value_label
             ctk.CTkButton(
-                body,
-                text="+1",
-                width=58,
+                body, text="+1", width=58,
                 command=lambda f=field: self._change_counter(f, 1),
-            ).grid(row=row, column=3, sticky="w", padx=(4, 12), pady=5)
+            ).grid(row=row, column=3, sticky="w", **BTN)
             row_counter[0] = row + 1
 
-        # -- New Tickets (auto-calc with editable counter) --
+        def _section(title: str) -> None:
+            row = row_counter[0]
+            sep = ctk.CTkFrame(body, height=1, fg_color="#3f3f46")
+            sep.grid(row=row, column=0, columnspan=6, sticky="ew", **SEP)
+            row_counter[0] = row + 1
+            row = row_counter[0]
+            ctk.CTkLabel(
+                body, text=title, font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#a1a1aa",
+            ).grid(row=row, column=0, sticky="w", padx=16, pady=(2, 4))
+            row_counter[0] = row + 1
+
+        # ── Tickets ──
+        _section("TICKETS")
+
         new_tickets_initial = int(data.get("new_tickets_count", 0))
         self._new_tickets_list = services.auto_calc_new_tickets(self.report_date)
         if new_tickets_initial == 0:
@@ -1421,109 +1429,25 @@ class DailyReportModal(ctk.CTkToplevel):
 
         row = row_counter[0]
         self.values["new_tickets_count"] = new_tickets_initial
-        ctk.CTkLabel(
-            body, text="New Tickets", font=ctk.CTkFont(weight="bold", size=14)
-        ).grid(row=row, column=0, sticky="w", padx=12, pady=6)
-        ctk.CTkButton(
-            body,
-            text="-",
-            width=44,
-            fg_color="#52525b",
-            command=lambda: self._change_counter("new_tickets_count", -1),
-        ).grid(row=row, column=1, sticky="e", padx=(6, 4), pady=5)
+        ctk.CTkLabel(body, text="New Tickets", anchor="w", width=240,
+                      font=ctk.CTkFont(weight="bold", size=14)).grid(row=row, column=0, **LBL)
+        ctk.CTkButton(body, text="-", width=44, fg_color="#52525b",
+                       command=lambda: self._change_counter("new_tickets_count", -1)).grid(row=row, column=1, sticky="e", **BTN)
         self.new_tickets_label = ctk.CTkLabel(
-            body,
-            text=str(self.values["new_tickets_count"]),
-            width=64,
-            fg_color="#1e3a8a",
-            corner_radius=8,
+            body, text=str(self.values["new_tickets_count"]),
+            width=64, fg_color="#1e3a8a", corner_radius=8,
             font=ctk.CTkFont(size=16, weight="bold"),
         )
-        self.new_tickets_label.grid(row=row, column=2, padx=4, pady=5)
+        self.new_tickets_label.grid(row=row, column=2, **BTN)
         self.value_labels["new_tickets_count"] = self.new_tickets_label
-        ctk.CTkButton(
-            body,
-            text="+1",
-            width=58,
-            command=lambda: self._change_counter("new_tickets_count", 1),
-        ).grid(row=row, column=3, sticky="w", padx=(4, 12), pady=5)
-        ctk.CTkButton(
-            body,
-            text="Auto",
-            width=48,
-            height=26,
-            fg_color="#2563eb",
-            command=self._auto_calc_new_tickets,
-        ).grid(row=row, column=4, padx=(2, 12), pady=5)
+        ctk.CTkButton(body, text="+1", width=58,
+                       command=lambda: self._change_counter("new_tickets_count", 1)).grid(row=row, column=3, sticky="w", **BTN)
+        ctk.CTkButton(body, text="Auto", width=50, height=28, fg_color="#2563eb",
+                       command=self._auto_calc_new_tickets).grid(row=row, column=4, **BTN)
+        ctk.CTkButton(body, text="Ver", width=50, height=28, fg_color="#0891b2",
+                       command=self._view_new_tickets).grid(row=row, column=5, **BTN)
         row_counter[0] = row + 1
 
-        # -- Inbound calls (counter + popup on +1) --
-        row = row_counter[0]
-        ctk.CTkLabel(
-            body, text="Inbound calls", font=ctk.CTkFont(weight="bold", size=14)
-        ).grid(row=row, column=0, sticky="w", padx=12, pady=6)
-        # Count from the details table
-        inbound_details = services.get_inbound_call_details(self.report_date)
-        inbound_count = len(inbound_details)
-        self.values["inbound_calls"] = inbound_count
-
-        self.inbound_label = ctk.CTkLabel(
-            body,
-            text=str(inbound_count),
-            width=64,
-            fg_color="#27272a",
-            corner_radius=8,
-            font=ctk.CTkFont(size=16, weight="bold"),
-        )
-        self.inbound_label.grid(row=row, column=2, padx=4, pady=5)
-        # +1 opens popup
-        ctk.CTkButton(
-            body,
-            text="+1",
-            width=58,
-            command=self._add_inbound_call,
-        ).grid(row=row, column=3, sticky="w", padx=(4, 12), pady=5)
-        # View details button
-        ctk.CTkButton(
-            body,
-            text="Ver",
-            width=48,
-            height=26,
-            fg_color="#0891b2",
-            command=self._view_inbound_details,
-        ).grid(row=row, column=4, padx=(2, 12), pady=5)
-        row_counter[0] = row + 1
-
-        # -- Simple counter fields --
-        for field, label in self.FIELDS:
-            _counter_row(field, label, int(data.get(field, 0)))
-
-        # -- Tickets needing HQ help --
-        row = row_counter[0]
-        ctk.CTkLabel(
-            body, text="Tickets needing HQ help or attention",
-            font=ctk.CTkFont(weight="bold", size=14),
-        ).grid(row=row, column=0, sticky="w", padx=12, pady=6)
-        self.hq_label = ctk.CTkLabel(
-            body,
-            text=str(len(self._get_hq_ticket_ids())),
-            width=64,
-            fg_color="#27272a",
-            corner_radius=8,
-            font=ctk.CTkFont(size=16, weight="bold"),
-        )
-        self.hq_label.grid(row=row, column=2, padx=4, pady=5)
-        ctk.CTkButton(
-            body,
-            text="Seleccionar",
-            width=86,
-            fg_color="#7c3aed",
-            hover_color="#6d28d9",
-            command=self._open_hq_selection,
-        ).grid(row=row, column=3, sticky="w", padx=(4, 12), pady=5)
-        row_counter[0] = row + 1
-
-        # -- Open Tickets (auto-calc with editable counter) --
         open_tickets_initial = int(data.get("open_tickets_count", 0))
         if open_tickets_initial == 0:
             open_tickets = services.auto_calc_open_tickets(self.report_date)
@@ -1531,40 +1455,64 @@ class DailyReportModal(ctk.CTkToplevel):
 
         row = row_counter[0]
         self.values["open_tickets_count"] = open_tickets_initial
-        ctk.CTkLabel(
-            body, text="Open tickets", font=ctk.CTkFont(weight="bold", size=14)
-        ).grid(row=row, column=0, sticky="w", padx=12, pady=6)
-        ctk.CTkButton(
-            body,
-            text="-",
-            width=44,
-            fg_color="#52525b",
-            command=lambda: self._change_counter("open_tickets_count", -1),
-        ).grid(row=row, column=1, sticky="e", padx=(6, 4), pady=5)
+        ctk.CTkLabel(body, text="Open Tickets", anchor="w", width=240,
+                      font=ctk.CTkFont(weight="bold", size=14)).grid(row=row, column=0, **LBL)
+        ctk.CTkButton(body, text="-", width=44, fg_color="#52525b",
+                       command=lambda: self._change_counter("open_tickets_count", -1)).grid(row=row, column=1, sticky="e", **BTN)
         self.open_tickets_label = ctk.CTkLabel(
-            body,
-            text=str(self.values["open_tickets_count"]),
-            width=64,
-            fg_color="#1e3a8a",
-            corner_radius=8,
+            body, text=str(self.values["open_tickets_count"]),
+            width=64, fg_color="#1e3a8a", corner_radius=8,
             font=ctk.CTkFont(size=16, weight="bold"),
         )
-        self.open_tickets_label.grid(row=row, column=2, padx=4, pady=5)
+        self.open_tickets_label.grid(row=row, column=2, **BTN)
         self.value_labels["open_tickets_count"] = self.open_tickets_label
-        ctk.CTkButton(
-            body,
-            text="+1",
-            width=58,
-            command=lambda: self._change_counter("open_tickets_count", 1),
-        ).grid(row=row, column=3, sticky="w", padx=(4, 12), pady=5)
-        ctk.CTkButton(
-            body,
-            text="Auto",
-            width=48,
-            height=26,
-            fg_color="#2563eb",
-            command=self._auto_calc_open_tickets,
-        ).grid(row=row, column=4, padx=(2, 12), pady=5)
+        ctk.CTkButton(body, text="+1", width=58,
+                       command=lambda: self._change_counter("open_tickets_count", 1)).grid(row=row, column=3, sticky="w", **BTN)
+        ctk.CTkButton(body, text="Auto", width=50, height=28, fg_color="#2563eb",
+                       command=self._auto_calc_open_tickets).grid(row=row, column=4, **BTN)
+        ctk.CTkButton(body, text="Ver", width=50, height=28, fg_color="#0891b2",
+                       command=self._view_open_tickets).grid(row=row, column=5, **BTN)
+        row_counter[0] = row + 1
+
+        # ── Llamadas y Chats ──
+        _section("LLAMADAS Y CHATS")
+
+        row = row_counter[0]
+        inbound_details = services.get_inbound_call_details(self.report_date)
+        inbound_count = len(inbound_details)
+        self.values["inbound_calls"] = inbound_count
+        ctk.CTkLabel(body, text="Inbound Calls", anchor="w", width=240,
+                      font=ctk.CTkFont(weight="bold", size=14)).grid(row=row, column=0, **LBL)
+        self.inbound_label = ctk.CTkLabel(
+            body, text=str(inbound_count),
+            width=64, fg_color="#27272a", corner_radius=8,
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.inbound_label.grid(row=row, column=2, **BTN)
+        ctk.CTkButton(body, text="+1", width=58,
+                       command=self._add_inbound_call).grid(row=row, column=3, sticky="w", **BTN)
+        ctk.CTkButton(body, text="Ver", width=50, height=28, fg_color="#0891b2",
+                       command=self._view_inbound_details).grid(row=row, column=4, **BTN)
+        row_counter[0] = row + 1
+
+        for field, label in self.FIELDS:
+            _counter_row(field, label, int(data.get(field, 0)))
+
+        # ── Otros ──
+        _section("OTROS")
+
+        row = row_counter[0]
+        ctk.CTkLabel(body, text="Tickets needing HQ help or attention", anchor="w", width=240,
+                      font=ctk.CTkFont(weight="bold", size=14)).grid(row=row, column=0, **LBL)
+        self.hq_label = ctk.CTkLabel(
+            body, text=str(len(self._get_hq_ticket_ids())),
+            width=64, fg_color="#27272a", corner_radius=8,
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.hq_label.grid(row=row, column=2, **BTN)
+        ctk.CTkButton(body, text="Seleccionar", width=86, fg_color="#7c3aed",
+                       hover_color="#6d28d9",
+                       command=self._open_hq_selection).grid(row=row, column=3, sticky="w", **BTN)
         row_counter[0] = row + 1
 
         # -- Buttons at the bottom --
@@ -1634,6 +1582,20 @@ class DailyReportModal(ctk.CTkToplevel):
         if self.open_tickets_label:
             self.open_tickets_label.configure(text=str(count))
 
+    # --- Ticket list details (New / Open) ---
+
+    def _view_new_tickets(self) -> None:
+        TicketListDetailsModal(self, self.report_date, "new")
+
+    def _view_open_tickets(self) -> None:
+        TicketListDetailsModal(self, self.report_date, "open")
+
+    def _refresh_new_tickets_count(self) -> None:
+        self._auto_calc_new_tickets()
+
+    def _refresh_open_tickets_count(self) -> None:
+        self._auto_calc_open_tickets()
+
     # --- Counter ---
 
     def _change_counter(self, field: str, delta: int) -> None:
@@ -1681,6 +1643,124 @@ class DailyReportModal(ctk.CTkToplevel):
         self.update()
         self.parent._show_toast("Mensaje copiado al portapapeles.")
         self.destroy()
+
+
+class TicketListDetailsModal(ctk.CTkToplevel):
+    """Modal to view tickets in a new/open list and exclude them from the count."""
+
+    def __init__(self, parent: DailyReportModal, report_date: date, list_type: str) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.report_date = report_date
+        self.list_type = list_type  # "new" or "open"
+        self.excluded_ids = services.get_excluded_ticket_ids(report_date, list_type)
+        self.all_tickets = services.get_tickets_for_list(report_date, list_type)
+
+        title_text = "New Tickets" if list_type == "new" else "Open Tickets"
+        self.title(f"Detalles - {title_text}")
+        self.geometry("700x500")
+        self.minsize(500, 400)
+        self.transient(parent)
+        self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        formatted_date = f"{report_date.day} {services.MONTHS_ES[report_date.month]} {report_date.year}"
+        ctk.CTkLabel(
+            header,
+            text=f"{title_text} - {formatted_date}",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 8))
+
+        self.list_frame = ctk.CTkScrollableFrame(self)
+        self.list_frame.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 14))
+        buttons.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(buttons, text="Cerrar", command=self.destroy).grid(
+            row=0, column=0, sticky="e"
+        )
+
+        _bind_modal_shortcuts(self, close_command=self.destroy)
+        self._render_list()
+
+    def _render_list(self) -> None:
+        for widget in self.list_frame.winfo_children():
+            widget.destroy()
+
+        # Headers
+        headers = ["#", "Ticket Nro", "Problema", "Estado", "Incluido"]
+        widths = [36, 130, 280, 120, 80]
+        for col, title in enumerate(headers):
+            ctk.CTkLabel(
+                self.list_frame,
+                text=title,
+                width=widths[col],
+                anchor="w",
+                font=ctk.CTkFont(weight="bold"),
+            ).grid(row=0, column=col, sticky="w", padx=4, pady=(4, 8))
+
+        if not self.all_tickets:
+            ctk.CTkLabel(
+                self.list_frame, text="No hay tickets en esta lista."
+            ).grid(row=1, column=0, columnspan=5, sticky="w", padx=8, pady=16)
+            return
+
+        for row_idx, ticket in enumerate(self.all_tickets, start=1):
+            tid = int(ticket["id"])
+            excluded = tid in self.excluded_ids
+            fg = "#dc2626" if excluded else "#22c55e"
+            btn_text = "Quitar" if not excluded else "Incluir"
+
+            ctk.CTkLabel(
+                self.list_frame,
+                text=str(row_idx),
+                width=widths[0],
+                anchor="w",
+            ).grid(row=row_idx, column=0, sticky="w", padx=4, pady=4)
+            ctk.CTkLabel(
+                self.list_frame,
+                text=str(ticket.get("numero_ticket", "")),
+                width=widths[1],
+                anchor="w",
+            ).grid(row=row_idx, column=1, sticky="w", padx=4, pady=4)
+            ctk.CTkLabel(
+                self.list_frame,
+                text=str(ticket.get("problem_name", "")),
+                width=widths[2],
+                anchor="w",
+            ).grid(row=row_idx, column=2, sticky="w", padx=4, pady=4)
+            ctk.CTkLabel(
+                self.list_frame,
+                text=str(ticket.get("estado", "")),
+                width=widths[3],
+                anchor="w",
+            ).grid(row=row_idx, column=3, sticky="w", padx=4, pady=4)
+            ctk.CTkButton(
+                self.list_frame,
+                text=btn_text,
+                width=widths[4],
+                height=26,
+                fg_color=fg,
+                hover_color="#991b1b" if not excluded else "#15803d",
+                command=lambda t=tid, e=excluded: self._toggle_exclusion(t, e),
+            ).grid(row=row_idx, column=4, sticky="w", padx=4, pady=2)
+
+    def _toggle_exclusion(self, ticket_id: int, currently_excluded: bool) -> None:
+        services.set_ticket_exclusion(
+            self.report_date, ticket_id, self.list_type, not currently_excluded
+        )
+        self.excluded_ids = services.get_excluded_ticket_ids(self.report_date, self.list_type)
+        # Refresh parent counter
+        if self.list_type == "new":
+            self.parent._refresh_new_tickets_count()
+        else:
+            self.parent._refresh_open_tickets_count()
+        self._render_list()
 
 
 class DailyReportTicketsModal(ctk.CTkToplevel):

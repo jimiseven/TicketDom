@@ -13,4 +13,5 @@
 - Use text labels for top bar section headers (OPERACIONES, BUSQUEDA, etc.) instead of icons. Confidence: 0.70
 
 # Formatting
-- Format open tickets as: `(ticket + problema),(ticket + problema)` with parentheses and plus separator. Confidence: 0.70
+- Format open tickets as: `numero_ticket : problem_name` without status column. Confidence: 0.80
+- Exclude tickets with 'no tomado' status from the new tickets count. Confidence: 0.70

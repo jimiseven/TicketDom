@@ -733,34 +733,101 @@ def set_hq_ticket(report_date: date, ticket_id: int, included: bool) -> None:
             )
 
 
-def auto_calc_new_tickets(report_date: date) -> list[dict[str, object]]:
-    """Get tickets created on the given date (regardless of status)."""
+def get_excluded_ticket_ids(report_date: date, list_type: str) -> set[int]:
+    """Get set of ticket ids excluded from a list (new|open) on a given date."""
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            "SELECT ticket_id FROM daily_report_ticket_exclusions WHERE fecha = ? AND list_type = ?",
+            (report_date.isoformat(), list_type),
+        ).fetchall()
+    return {int(row["ticket_id"]) for row in rows}
+
+
+def set_ticket_exclusion(report_date: date, ticket_id: int, list_type: str, excluded: bool) -> None:
+    """Add or remove a ticket exclusion from a list (new|open) for a given date."""
+    with get_connection() as conn:
+        if excluded:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO daily_report_ticket_exclusions (fecha, ticket_id, list_type, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (report_date.isoformat(), ticket_id, list_type, _now()),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM daily_report_ticket_exclusions WHERE fecha = ? AND ticket_id = ? AND list_type = ?",
+                (report_date.isoformat(), ticket_id, list_type),
+            )
+
+
+def auto_calc_new_tickets(report_date: date) -> list[dict[str, object]]:
+    """Get tickets created on the given date (excluding 'no tomado' and exclusions)."""
+    excluded = get_excluded_ticket_ids(report_date, "new")
+    with get_connection() as conn:
+        query = """
             SELECT id, numero_ticket, problem_name
             FROM tickets
             WHERE fecha_creacion = ?
-            ORDER BY id DESC
-            """,
-            (report_date.isoformat(),),
-        ).fetchall()
+              AND estado != 'no tomado'
+        """
+        params: list[object] = [report_date.isoformat()]
+        if excluded:
+            placeholders = ",".join("?" for _ in excluded)
+            query += f" AND id NOT IN ({placeholders})"
+            params.extend(excluded)
+        query += " ORDER BY id DESC"
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_tickets_for_list(report_date: date, list_type: str) -> list[dict[str, object]]:
+    """Get all eligible tickets for a list (new|open) without exclusion filter."""
+    with get_connection() as conn:
+        if list_type == "new":
+            rows = conn.execute(
+                """
+                SELECT id, numero_ticket, problem_name, estado
+                FROM tickets
+                WHERE fecha_creacion = ?
+                  AND estado != 'no tomado'
+                ORDER BY id DESC
+                """,
+                (report_date.isoformat(),),
+            ).fetchall()
+        elif list_type == "open":
+            rows = conn.execute(
+                """
+                SELECT id, numero_ticket, problem_name, estado
+                FROM tickets
+                WHERE fecha_creacion <= ?
+                  AND estado NOT IN ('cerrado', 'no tomado')
+                ORDER BY fecha_creacion DESC, id DESC
+                """,
+                (report_date.isoformat(),),
+            ).fetchall()
+        else:
+            return []
     return [dict(row) for row in rows]
 
 
 def auto_calc_open_tickets(report_date: date) -> list[dict[str, object]]:
-    """Get tickets that are open at end of day (not cerrado/no tomado) for the given date."""
+    """Get tickets that are open at end of day (excl. cerrado/no tomado and exclusions)."""
+    excluded = get_excluded_ticket_ids(report_date, "open")
     with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, numero_ticket, problem_name
+        query = """
+            SELECT id, numero_ticket, problem_name, estado_actual
             FROM tickets
             WHERE fecha_creacion <= ?
               AND estado NOT IN ('cerrado', 'no tomado')
-            ORDER BY fecha_creacion DESC, id DESC
-            """,
-            (report_date.isoformat(),),
-        ).fetchall()
+        """
+        params: list[object] = [report_date.isoformat()]
+        if excluded:
+            placeholders = ",".join("?" for _ in excluded)
+            query += f" AND id NOT IN ({placeholders})"
+            params.extend(excluded)
+        query += " ORDER BY fecha_creacion DESC, id DESC"
+        rows = conn.execute(query, params).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -892,37 +959,31 @@ def reset_daily_report_ticket_overrides(report_date: date) -> None:
         )
 
 
-def _format_ticket_list(tickets: list[dict[str, object]], max_items: int = 6) -> str:
+def _format_ticket_list(tickets: list[dict[str, object]]) -> str:
     """Format a list of tickets inline: count → ticket1, ticket2."""
     if not tickets:
         return "0"
     parts = [str(t["numero_ticket"]) for t in tickets if t.get("numero_ticket")]
-    if len(parts) > max_items:
-        parts = parts[:max_items] + ["..."]
     return f"{len(tickets)} — {', '.join(parts)}"
 
 
-def _format_inbound_list(details: list[dict[str, object]], max_items: int = 4) -> str:
+def _format_inbound_list(details: list[dict[str, object]]) -> str:
     """Format inbound calls inline: count → (phone + ticket), ..."""
     if not details:
         return "0"
     parts = [f"({d['phone']} + {d['numero_ticket']})" for d in details]
-    if len(parts) > max_items:
-        parts = parts[:max_items] + ["..."]
     return f"{len(details)} — {', '.join(parts)}"
 
 
-def _format_open_tickets(tickets: list[dict[str, object]], max_items: int = 4) -> str:
-    """Format open tickets inline: count — (ticket+issue), ..."""
+def _format_open_tickets(tickets: list[dict[str, object]]) -> str:
+    """Format open tickets: count then one ticket per line."""
     if not tickets:
         return "0"
-    parts = []
+    lines = [str(len(tickets))]
     for t in tickets:
-        issue = (t.get("problem_name") or "")[:40]
-        parts.append(f"({t['numero_ticket']}+{issue})")
-    if len(parts) > max_items:
-        parts = parts[:max_items] + ["..."]
-    return f"{len(tickets)} — {', '.join(parts)}"
+        issue = t.get("problem_name") or ""
+        lines.append(f"{t['numero_ticket']} : {issue}")
+    return "\n".join(lines)
 
 
 def build_daily_report_message(

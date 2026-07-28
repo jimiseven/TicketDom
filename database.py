@@ -145,6 +145,16 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
             UNIQUE(fecha, ticket_id)
         );
+
+        CREATE TABLE IF NOT EXISTS daily_report_ticket_exclusions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha DATE NOT NULL,
+            ticket_id INTEGER NOT NULL,
+            list_type TEXT NOT NULL CHECK (list_type IN ('new', 'open')),
+            created_at DATETIME NOT NULL,
+            FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+            UNIQUE(fecha, ticket_id, list_type)
+        );
         """
     )
 
